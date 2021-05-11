@@ -68,8 +68,8 @@ Ainv = np.linalg.pinv(AA)
 
 # import pdb; pdb.set_trace()
 
-lmbda = 1
-eta = 1
+lmbda = 1000
+eta = 1000
 iters = 4
 # import pdb; pdb.set_trace()
 
@@ -114,10 +114,9 @@ for t in range(iters):
             # for link in robot.links:
             xyz = xx.data[0][:3, -1]
             cost = np.sum(xyz)
-            # print(i, qt, qe)
             total_cost += cost
-            # delta := gradient of obstacle cost in work space, (6, cdim) 
-            delta =  np.concatenate([[1, 1, 0], np.zeros(3)])
+            # delta := negative gradient of obstacle cost in work space, (6, cdim) 
+            delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
 
             # if t == 0:
                 # print(JJ.T.dot(vel).dot(prj.dot(delta) - cost * kappa))
@@ -126,8 +125,8 @@ for t in range(iters):
                 nabla_obs[cdim * i: cdim * i + k + 1] += JJ.T.dot(vel).dot(prj.dot(delta) - cost * kappa)
             except:
                 import pdb; pdb.set_trace()
-    dxi = Ainv.dot(lmbda * nabla_smooth)
-    # dxi = Ainv.dot(nabla_obs + lmbda * nabla_smooth)
+    # dxi = Ainv.dot(lmbda * nabla_smooth)
+    dxi = Ainv.dot(nabla_obs + lmbda * nabla_smooth)
     xi -= dxi / eta
     print(f"Iteration {t} total cost {total_cost}")
 
