@@ -239,7 +239,125 @@ def get_link_cost(robot, meshes, link, num=-1, parallel=True):
     """
     vertice_xyz = get_vertices_xyz(robot, meshes, link, num, parallel)
 
+def test_parallel():
+    robot = rtb.models.DH.Panda() # load Mesh version (for collisions)
+    T = robot.fkine(robot.qz)  # forward kinematics
+    T = SE3(0.7, 0.2, 0.1) * SE3.OA([0, 1, 0], [0, 0, -1])
+    sol = robot.ikine_LM(T)         # solve IK
+    q_pickup = sol.q
+    qtraj = rtb.jtraj(robot.qz, q_pickup, 50)
+    robot = rtb.models.URDF.Panda()  # load URDF version of the Panda
+    meshes = {}
+    for link in robot.links:
+        if len(link.geometry) != 1:
+            print(len(link.geometry))
+            continue
+        kwargs = trimesh.exchange.dae.load_collada(link.geometry[0].filename)
+        # kwargs = trimesh.exchange.dae.load_collada(filename)
+        mesh = trimesh.exchange.load.load_kwargs(kwargs)
+        meshes[link.name] = mesh.dump(concatenate=True)
+        print(link.name, mesh)
+
+    # Hyperparameters
+    dt = 1
+    nq = 50
+    lmbda = 1000
+    eta = 1000
+    iters = 4
+    num_pts = 5
+
+
+    # Make cost field, starting & end points
+    cdim = len(qtraj.q[0])
+    xidim = cdim * nq
+    AA = np.zeros((xidim, xidim))
+    xi = np.zeros(xidim)
+    robot._set_link_fk(qtraj.q[1])
+
+    link = robot.links[-2]
+    k = link.jindex
+
+
+    link_base = robot.fkine(robot.q, end=link) # x_current, (4, 4)
+    # Non-parallel, use for loop
+    mesh = meshes[link.name]
+
+    # for j in range(num_pts): 
+    #     # For each point: compute Jacobian, compute cost, compute cost gradient
+
+    #     pt_rel = mesh.vertices[j]
+    #     pt_tool = link_base @ SE3(pt_rel)
+    #     pt_pos = pt_tool.t
+
+    #     JJ = robot.jacob0(qt, end=link, tool=SE3(pt_rel)) # (k, 6)                
+    #     import pdb; pdb.set_trace()
+    #     xd = JJ.dot(qd[:k+1]) # x_delta
+    #     vel = np.linalg.norm(xd)
+ 
+    #     xdn = xd / (vel + 1e-3) # speed normalized
+    #     xdd = JJ.dot(xidd[cdim * i: cdim * i + k + 1]) # second derivative of xi
+    #     prj = np.eye(6) - xdn[:, None].dot(xdn[:, None].T) # curvature vector (6, 6)
+    #     kappa = (prj.dot(xdd) / (vel ** 2 + 1e-3)) # (6,)
+
+    #     cost = np.sum(pt_pos)
+    #     total_cost += cost / num_pts
+    #     # delta := negative gradient of obstacle cost in work space, (6, cdim) 
+    #     delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
+    #     # for link in robot.links:
+    #     #     cost = get_link_cost(robot, meshes, link)
+    #     delta_nabla_obs += JJ.T.dot(vel).dot(prj.dot(delta) - cost * kappa)
+    
+    # nabla_obs[cdim * i: cdim * i + k + 1] += (delta_nabla_obs / num_pts)
+    # Parallel, use cuda
+
+    fknm_=np.ctypeslib.load_library('roboticstoolbox/cuda/fknm','.')
+    import ctypes as ct
+    pts = np.array(meshes[link.name].vertices[:num_pts])
+    e_pts = np.zeros((num_pts, 3))
+    pts_tool = np.array(SE3(pts).A)
+    pts_etool = np.array(SE3(e_pts).A)
+    
+    link_As = []
+    link_axes = []
+    for link in robot.links:
+        link_As.append(link.A().A)
+        axis = None
+        if not link.isjoint:
+            axis = -1
+        elif link._v.axis == "Rx":
+            axis = 0
+        elif link._v.axis == "Ry":
+            axis = 1
+        elif link._v.axis == "Rz":
+            axis = 2
+        elif link._v.axis == "tx":
+            axis = 3
+        elif link._v.axis == "ty":
+            axis = 4
+        elif link._v.axis == "tz":
+            axis = 5
+        else:
+            raise NotImplementedError
+        link_axes.append(axis)
+    link_As = np.array(link_As)
+    link_axes = np.array(link_axes, dtype=int)
+    link_isjoint = np.array([l.isjoint for l in robot.links], dtype=int)
+    jacob_out = np.ones((num_pts, 6, cdim))
+
+    fknm_.jacob0(pts.ctypes.data_as(ct.c_void_p),
+                 pts_tool.ctypes.data_as(ct.c_void_p),
+                 pts_etool.ctypes.data_as(ct.c_void_p),
+                 # link_As.ctypes.data_as(ct.c_void_p),
+                 ct.c_void_p(link_As.ctypes.data),
+                 link_axes.ctypes.data_as(ct.c_void_p),
+                 link_isjoint.ctypes.data_as(ct.c_void_p),
+                 ct.c_int(num_pts),
+                 ct.c_int(len(robot.links)),
+                 jacob_out.ctypes.data_as(ct.c_void_p))
+    print(jacob_out)
+    import pdb; pdb.set_trace()
 
 
 if __name__ == "__main__":
-    chomp()
+    # chomp()
+    test_parallel()

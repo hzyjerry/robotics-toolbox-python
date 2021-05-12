@@ -5,10 +5,10 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-__device__ int _inv(float *m, float *invOut);
-__device__ void mult(float *A, float *B, float *C);
-__device__ void copy(float *A, float *B);
-__device__ void _eye(float *data);
+__device__ int _inv(double *m, double *invOut);
+__device__ void mult(double *A, double *B, double *C);
+__device__ void copy(double *A, double *B);
+__device__ void _eye(double *data);
 
 
 
@@ -24,25 +24,25 @@ __device__ void _eye(float *data);
  *  cdim: (int) number of joints
  *  out: (N, 6, cdim)
  */
-__global__ void _jacob0(float *T,
-                        float *tool, 
-                        float *e_tool, 
-                        float *link_A, 
+__global__ void _jacob0(double *T,
+                        double *tool, 
+                        double *e_tool, 
+                        double *link_A, 
                         int *link_axes,
                         int *link_isjoint, 
                         int N, 
                         int cdim, 
-                        float *out)
+                        double *out)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    float *T_i, *tool_i;
-    float *U, *temp, *etool_i;
-    float *invU;
-    float *link_iA;
+    double *T_i, *tool_i;
+    double *U, *temp, *etool_i;
+    double *invU;
+    double *link_iA;
 
-    cudaMalloc((void**)&U, sizeof(float) * 16);
-    cudaMalloc((void**)&invU, sizeof(float) * 16);
-    cudaMalloc((void**)&temp, sizeof(float) * 16);
+    cudaMalloc((void**)&U, sizeof(double) * 16);
+    cudaMalloc((void**)&invU, sizeof(double) * 16);
+    cudaMalloc((void**)&temp, sizeof(double) * 16);
     int j = 0;
 
     T_i = &T[tid * 16];
@@ -65,7 +65,7 @@ __global__ void _jacob0(float *T,
             _inv(U, invU);
             mult(invU, T_i, temp);
 
-            float *out_tid = &out[tid + 16];
+            double *out_tid = &out[tid + 16];
 
             if (link_axes[i] == 0) {
                 out_tid[0 * tid + j] = U[0 * 4 + 2] * temp[1 * 4 + 3] - U[0 * 4 + 1] * temp[2 * 4 + 3];
@@ -134,7 +134,7 @@ __global__ void _jacob0(float *T,
 }
 
 
-__device__ void _eye(float *data)
+__device__ void _eye(double *data)
 {
     data[0] = 1;
     data[1] = 0;
@@ -154,7 +154,7 @@ __device__ void _eye(float *data)
     data[15] = 1;
 }
 
-__device__ void copy(float *A, float *B)
+__device__ void copy(double *A, double *B)
 {
     // copy A into B
     B[0] = A[0];
@@ -175,7 +175,7 @@ __device__ void copy(float *A, float *B)
     B[15] = A[15];
 }
 
-__device__ void mult(float *A, float *B, float *C)
+__device__ void mult(double *A, double *B, double *C)
 {
     const int N = 4;
     int i, j, k;
@@ -195,10 +195,10 @@ __device__ void mult(float *A, float *B, float *C)
     }
 }
 
-__device__ int _inv(float *m, float *invOut)
+__device__ int _inv(double *m, double *invOut)
 {
-    float *inv;
-    cudaMalloc((void**)&inv, sizeof(float) * 16);
+    double *inv;
+    cudaMalloc((void**)&inv, sizeof(double) * 16);
     double det;
     int i;
 
@@ -329,6 +329,9 @@ __device__ int _inv(float *m, float *invOut)
 }
 
 
+
+extern "C"{
+
 /* 
  * Params
  *  T: (N, 4, 4) the final transform matrix of all points (shared)
@@ -340,42 +343,42 @@ __device__ int _inv(float *m, float *invOut)
  *  cdim: (int) number of joints
  *  out: (N, 6, cdim)
  */
-void jacob0(float *T, 
-            float *tool,
-            float *etool,
-            float *link_A, 
+void jacob0(double *T, 
+            double *tool,
+            double *etool,
+            double *link_A, 
             int *link_axes,
             int *link_isjoint, 
             int N, 
             int cdim, 
-            float *out)
+            double *out)
     // affine_T[N]
     // link_axes[cdim]
     // link_A[cdim]
     // link_isjoint[cdim]
     // out
 {
-    float *d_T, *d_tool, *d_etool, *d_link_A;
+    double *d_T, *d_tool, *d_etool, *d_link_A;
     int *d_link_axes, *d_link_isjoint;
-    float *d_out;
+    double *d_out;
 
-    cudaMalloc((void**)&d_T, sizeof(float) * N * 16);
-    cudaMalloc((void**)&d_tool, sizeof(float) * N * 16);
-    cudaMalloc((void**)&d_etool, sizeof(float) * N * 16);
-    cudaMalloc((void**)&d_link_A, sizeof(float) * cdim * 16);
+    cudaMalloc((void**)&d_T, sizeof(double) * N * 16);
+    cudaMalloc((void**)&d_tool, sizeof(double) * N * 16);
+    cudaMalloc((void**)&d_etool, sizeof(double) * N * 16);
+    cudaMalloc((void**)&d_link_A, sizeof(double) * cdim * 16);
     cudaMalloc((void**)&d_link_axes, sizeof(int) * cdim);
     cudaMalloc((void**)&d_link_isjoint, sizeof(int) * cdim);
-    cudaMalloc((void**)&d_out, sizeof(float) * 6 * cdim);
+    cudaMalloc((void**)&d_out, sizeof(double) * 6 * cdim);
 
 
     // Transfer data from host to device memory
-    cudaMemcpy(d_T, T, sizeof(float) * N * 16, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_tool, tool, sizeof(float) * N * 16, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_etool, etool, sizeof(float) * N * 16, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_link_A, link_A, sizeof(float) * cdim * 16, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_T, T, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_tool, tool, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_etool, etool, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_link_A, link_A, sizeof(double) * cdim * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_link_axes, link_axes, sizeof(int) * cdim, cudaMemcpyHostToDevice);
     cudaMemcpy(d_link_isjoint, link_isjoint, sizeof(int) * cdim, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_out, out, sizeof(float) * 6 * cdim, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_out, out, sizeof(double) * 6 * cdim, cudaMemcpyHostToDevice);
 
 
     int block_size = 256;
@@ -390,7 +393,10 @@ void jacob0(float *T,
                                       cdim,
                                       d_out);
 
-    cudaMemcpy(out, d_out, sizeof(float) * 6 * cdim, cudaMemcpyDeviceToHost);
+    // memset(out, 1, N * 6 * cdim);
+    // out[0] = 1;
+    cudaMemcpy(out, d_out, sizeof(double) * 6 * cdim, cudaMemcpyDeviceToHost);
+    printf("Out size %d %d %f %f %f %f %f", N, cdim, out[0], out[1], out[2], out[3], out[4]);
 
     // Deallocate device memory
     cudaFree(d_T);
@@ -401,3 +407,6 @@ void jacob0(float *T,
     cudaFree(d_link_isjoint);
     cudaFree(d_out);
 }
+
+
+}//extern "C"
