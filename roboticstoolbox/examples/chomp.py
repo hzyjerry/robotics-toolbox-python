@@ -87,6 +87,10 @@ def chomp():
     AA /= dt * dt * (nq + 1)
     Ainv = np.linalg.pinv(AA)
 
+    fknm_ = None
+    if parallel:
+        fknm_ = np.ctypeslib.load_library('roboticstoolbox/cuda/fknm','.')
+
     for t in range(iters):
         nabla_smooth = AA.dot(xi) + bb
         nabla_obs = np.zeros(xidim)
@@ -103,6 +107,7 @@ def chomp():
             else:
                 qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - xi[cdim * (i-1): cdim * (i)])
 
+            import pdb; pdb.set_trace()
             for link in robot.links: # bodypart
                 k = link.jindex
                 if k is None:
@@ -111,6 +116,7 @@ def chomp():
                 link_base = robot.fkine(robot.q, end=link) # x_current, (4, 4)
                 delta_nabla_obs = np.zeros(k + 1)
                 if not parallel:
+                    # Non-parallel, use for loop
                     mesh = meshes[link.name]
                     for j in range(num_pts): 
                         # For each point: compute Jacobian, compute cost, compute cost gradient
@@ -139,8 +145,11 @@ def chomp():
                     
                     nabla_obs[cdim * i: cdim * i + k + 1] += (delta_nabla_obs / num_pts)
                 else:
-                    pass
-                
+                    # Parallel, use cuda
+                    import ctypes as ct
+                    pt_rel = np.array(mesh.vertices[j])
+
+
         # dxi = Ainv.dot(lmbda * nabla_smooth)
         dxi = Ainv.dot(nabla_obs + lmbda * nabla_smooth)
         xi -= dxi / eta

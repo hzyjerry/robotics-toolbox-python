@@ -1,6 +1,7 @@
 # Vim
 *.sw*
 *.gif
+*.so
 
 .idea/*
 
