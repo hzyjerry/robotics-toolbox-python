@@ -9,7 +9,8 @@ from spatialgeometry import *
 import numpy as np
 import trimesh
 import time
-
+import math
+from numba import vectorize 
 
 visualize = True
 use_mesh = True
@@ -118,9 +119,8 @@ def chomp():
                         pt_tool = link_base @ SE3(pt_rel)
                         pt_pos = pt_tool.t
 
-                        # JJ = robot.jacob0(qt, end=link, tool=pt_tool) # (k, 6)                
                         JJ = robot.jacob0(qt, end=link, tool=SE3(pt_rel)) # (k, 6)                
-                        ## TODO: get mesh data, vertices
+                        import pdb; pdb.set_trace()
                         xd = JJ.dot(qd[:k+1]) # x_delta
                         vel = np.linalg.norm(xd)
                  
@@ -138,13 +138,16 @@ def chomp():
                         delta_nabla_obs += JJ.T.dot(vel).dot(prj.dot(delta) - cost * kappa)
                     
                     nabla_obs[cdim * i: cdim * i + k + 1] += (delta_nabla_obs / num_pts)
+                else:
+                    pass
                 
         # dxi = Ainv.dot(lmbda * nabla_smooth)
         dxi = Ainv.dot(nabla_obs + lmbda * nabla_smooth)
         xi -= dxi / eta
         print(f"Iteration {t} total cost {total_cost}")
 
-
+    # @vectorize(['float32(float32)'], target='cuda')
+    # def vec_jacob0()
 
     if visualize:
         from roboticstoolbox.backends.swift import Swift  # instantiate 3D browser-based visualizer
