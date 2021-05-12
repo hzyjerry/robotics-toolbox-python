@@ -13,6 +13,7 @@ import time
 
 visualize = True
 use_mesh = True
+parallel = False
 
 
 def chomp():
@@ -58,6 +59,7 @@ def chomp():
     lmbda = 1000
     eta = 1000
     iters = 4
+    num_pts = 5
 
 
     # Make cost field, starting & end points
@@ -92,41 +94,51 @@ def chomp():
         for i in range(nq): # timestep
             robot.q = xi[cdim * i: cdim * (i+1)]
             # print(t, i, xi[cdim * i: cdim * (i+1)])
+            qt = xi[cdim * i: cdim * (i+1)]
+            if i == 0:
+                qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - qs)
+            elif i == nq - 1:
+                qd = 0.5 * (qe - xi[cdim * (i-1): cdim * (i)])
+            else:
+                qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - xi[cdim * (i-1): cdim * (i)])
+
             for link in robot.links: # bodypart
                 k = link.jindex
                 if k is None:
                     continue
+
+                link_base = robot.fkine(robot.q, end=link) # x_current, (4, 4)
+                delta_nabla_obs = np.zeros(k + 1)
+                if not parallel:
+                    mesh = meshes[link.name]
+                    for j in range(num_pts): 
+                        # For each point: compute Jacobian, compute cost, compute cost gradient
+
+                        pt_rel = mesh.vertices[j]
+                        pt_tool = link_base @ SE3(pt_rel)
+                        pt_pos = pt_tool.t
+
+                        # JJ = robot.jacob0(qt, end=link, tool=pt_tool) # (k, 6)                
+                        JJ = robot.jacob0(qt, end=link, tool=SE3(pt_rel)) # (k, 6)                
+                        ## TODO: get mesh data, vertices
+                        xd = JJ.dot(qd[:k+1]) # x_delta
+                        vel = np.linalg.norm(xd)
+                 
+                        xdn = xd / (vel + 1e-3) # speed normalized
+                        xdd = JJ.dot(xidd[cdim * i: cdim * i + k + 1]) # second derivative of xi
+                        prj = np.eye(6) - xdn[:, None].dot(xdn[:, None].T) # curvature vector (6, 6)
+                        kappa = (prj.dot(xdd) / (vel ** 2 + 1e-3)) # (6,)
+
+                        cost = np.sum(pt_pos)
+                        total_cost += cost / num_pts
+                        # delta := negative gradient of obstacle cost in work space, (6, cdim) 
+                        delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
+                        # for link in robot.links:
+                        #     cost = get_link_cost(robot, meshes, link)
+                        delta_nabla_obs += JJ.T.dot(vel).dot(prj.dot(delta) - cost * kappa)
+                    
+                    nabla_obs[cdim * i: cdim * i + k + 1] += (delta_nabla_obs / num_pts)
                 
-                qt = xi[cdim * i: cdim * (i+1)]
-                JJ = robot.jacob0(qt, end=link) # (k, 6)                
-                if i == 0:
-                    qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - qs)
-                elif i == nq - 1:
-                    qd = 0.5 * (qe - xi[cdim * (i-1): cdim * (i)])
-                else:
-                    qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - xi[cdim * (i-1): cdim * (i)])
-
-                qq = xi[cdim * i: cdim * i + k + 1]
-                xx = robot.fkine(qt, end=link) # x_current, (4, 4)
-                ## TODO: get mesh data, vertices
-                xd = JJ.dot(qd[:k+1]) # x_delta
-                vel = np.linalg.norm(xd)
-         
-                xdn = xd / (vel + 1e-3) # speed normalized
-                xdd = JJ.dot(xidd[cdim * i: cdim * i + k + 1]) # second derivative of x
-                prj = np.eye(6) - xdn[:, None].dot(xdn[:, None].T) # curvature vector (6, 6)
-                kappa = (prj.dot(xdd) / (vel ** 2 + 1e-3)) # (6,)
-
-                xyz = xx.data[0][:3, -1]
-                cost = np.sum(xyz)
-                total_cost += cost
-                # delta := negative gradient of obstacle cost in work space, (6, cdim) 
-                delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
-                # for link in robot.links:
-                #     cost = get_link_cost(robot, meshes, link)
-
-                nabla_obs[cdim * i: cdim * i + k + 1] += JJ.T.dot(vel).dot(prj.dot(delta) - cost * kappa)
-
         # dxi = Ainv.dot(lmbda * nabla_smooth)
         dxi = Ainv.dot(nabla_obs + lmbda * nabla_smooth)
         xi -= dxi / eta
