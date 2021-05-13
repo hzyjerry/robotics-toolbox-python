@@ -33,6 +33,7 @@ __global__ void _jacob0(double *T,
                         long *link_axes,
                         long *link_isjoint, 
                         int N, 
+                        int max_nlinks, 
                         int njoints, 
                         double *out)
 {
@@ -62,13 +63,14 @@ __global__ void _jacob0(double *T,
         return;
     }
 
-    int nlinks = nlinks_pt[tid];
-    // printf("Hello from tid %d nlinks %d\n", tid, nlinks);
+    long nlinks = nlinks_pt[tid];
+    double *link_A_tid = &link_A[tid * max_nlinks * 4 * 4];
+    // printf("Hello from tid %d nlinks %ld\n", tid, nlinks);
     for (int i = 0; i < nlinks; i++) {
         // printf("Hello from tid %d link_i %d link_axis %ld isjoint %ld \n", tid, i, link_axes[i], link_isjoint[i]);
 
         if (link_isjoint[i] == 1) {
-            link_iA = &link_A[i * 16];
+            link_iA = &link_A_tid[i * 16];
             mult(U, link_iA, temp);
             copy(temp, U);
 
@@ -141,7 +143,7 @@ __global__ void _jacob0(double *T,
         } 
         else 
         {
-            link_iA = &link_A[i * 16];    
+            link_iA = &link_A_tid[i * 16];    
             mult(U, link_iA, temp);
             copy(temp, U);
         }
@@ -357,7 +359,7 @@ extern "C"{
  *  T: double(N, 4, 4) the final transform matrix of all points (shared)
  *  tool: double(N, 4, 4) the tool transform matrix of all points (shared)
  *  nlinks_pt: long(N,): the number of links associated with each (shared)
- *  link_A: double(max_nlinks, 4, 4) the transformation matrix of all joints
+ *  link_A: double(N, max_nlinks, 4, 4) the transformation matrix of all joints
  *  link_axes: long(max_nlinks, ): axes of all links
  *  link_isjoint: long(max_nlinks, ): 1/0 whether links are joints
  *  N: (int) number of points
@@ -377,6 +379,10 @@ void jacob0(double *T,
             int njoints, 
             double *out)
 {
+    int block_size = 256;
+    int grid_size = ((N + block_size) / block_size);
+    // printf("Block size %d N %d gid size %d\n", block_size, N, grid_size);
+
     double *d_T, *d_tool, *d_etool, *d_link_A;
     long *d_link_axes, *d_link_isjoint, *d_nlinks_pt;
     double *d_out;
@@ -384,7 +390,7 @@ void jacob0(double *T,
     cudaMalloc((void**)&d_T, sizeof(double) * N * 16);
     cudaMalloc((void**)&d_tool, sizeof(double) * N * 16);
     cudaMalloc((void**)&d_etool, sizeof(double) * N * 16);
-    cudaMalloc((void**)&d_link_A, sizeof(double) * max_nlinks * 16);
+    cudaMalloc((void**)&d_link_A, sizeof(double) * N * max_nlinks * 16);
     cudaMalloc((void**)&d_nlinks_pt, sizeof(long) * N);
     cudaMalloc((void**)&d_link_axes, sizeof(long) * max_nlinks);
     cudaMalloc((void**)&d_link_isjoint, sizeof(long) * max_nlinks);
@@ -395,16 +401,13 @@ void jacob0(double *T,
     cudaMemcpy(d_T, T, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_tool, tool, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_etool, etool, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_link_A, link_A, sizeof(double) * max_nlinks * 16, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_link_A, link_A, sizeof(double) * N * max_nlinks * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_nlinks_pt, nlinks_pt, sizeof(long) * N, cudaMemcpyHostToDevice);
     cudaMemcpy(d_link_axes, link_axes, sizeof(long) * max_nlinks, cudaMemcpyHostToDevice);
     cudaMemcpy(d_link_isjoint, link_isjoint, sizeof(long) * max_nlinks, cudaMemcpyHostToDevice);
     cudaMemcpy(d_out, out, sizeof(double) * N * 6 * njoints, cudaMemcpyHostToDevice);
 
 
-    int block_size = 256;
-    int grid_size = ((N + block_size) / block_size);
-    // printf("Block size %d gid size %d\n", block_size, grid_size);
     _jacob0<<<grid_size,block_size>>>(d_T, 
                                       d_tool,
                                       d_etool,
@@ -413,6 +416,7 @@ void jacob0(double *T,
                                       d_link_axes,
                                       d_link_isjoint,
                                       N,
+                                      max_nlinks,
                                       njoints,
                                       d_out);
 

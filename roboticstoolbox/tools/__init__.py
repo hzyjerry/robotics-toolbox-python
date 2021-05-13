@@ -2,6 +2,7 @@ from roboticstoolbox.tools.null import null
 from roboticstoolbox.tools.p_servo import p_servo
 from roboticstoolbox.tools.Ticker import Ticker
 from roboticstoolbox.tools.urdf import *  # noqa
+from roboticstoolbox.tools.utils import *  # noqa
 from roboticstoolbox.tools.profiler import Profiler
 from roboticstoolbox.tools.trajectory import tpoly, tpoly_func, \
     jtraj, mtraj, ctraj, lspb, lspb_func, qplot, mstraj
@@ -30,5 +31,11 @@ __all__ = [
     'loaddata',
     'loadmat',
     'path_to_datafile',
-    'Profiler'
+    'Profiler',
+    'vmatmul',
+    'vmmatmul',
+    'vrepeat',
+    'jacob0_pts_loop',
+    'jacob0_pts_vec',
+    'jacob0_vec'
 ]
