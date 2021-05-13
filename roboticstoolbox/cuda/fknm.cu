@@ -18,9 +18,9 @@ __device__ void _eye(double *data);
  *  T: double(N, 4, 4) the final transform matrix of all points (shared)
  *  tool: double(N, 4, 4) the tool transform matrix of all points (shared)
  *  nlinks_pt: long(N,): the number of links associated with each (shared)
- *  link_A: double(nlinks, 4, 4) the transformation matrix of all joints
- *  link_axes: long(nlinks, ): axes of all links
- *  link_isjoint: long(nlinks, ): 1/0 whether links are joints
+ *  link_A: double(max_nlinks, 4, 4) the transformation matrix of all joints
+ *  link_axes: long(max_nlinks, ): axes of all links
+ *  link_isjoint: long(max_nlinks, ): 1/0 whether links are joints
  *  N: (int) number of points
  *  njoints: (int) number of joints
  *  out: (N, 6, njoints)
@@ -33,7 +33,6 @@ __global__ void _jacob0(double *T,
                         long *link_axes,
                         long *link_isjoint, 
                         int N, 
-                        int nlinks, 
                         int njoints, 
                         double *out)
 {
@@ -63,7 +62,7 @@ __global__ void _jacob0(double *T,
         return;
     }
 
-    // int nlinks = nlinks_pt[tid];
+    int nlinks = nlinks_pt[tid];
     // printf("Hello from tid %d nlinks %d\n", tid, nlinks);
     for (int i = 0; i < nlinks; i++) {
         // printf("Hello from tid %d link_i %d link_axis %ld isjoint %ld \n", tid, i, link_axes[i], link_isjoint[i]);
@@ -358,11 +357,11 @@ extern "C"{
  *  T: double(N, 4, 4) the final transform matrix of all points (shared)
  *  tool: double(N, 4, 4) the tool transform matrix of all points (shared)
  *  nlinks_pt: long(N,): the number of links associated with each (shared)
- *  link_A: double(nlinks, 4, 4) the transformation matrix of all joints
- *  link_axes: long(nlinks, ): axes of all links
- *  link_isjoint: long(nlinks, ): 1/0 whether links are joints
+ *  link_A: double(max_nlinks, 4, 4) the transformation matrix of all joints
+ *  link_axes: long(max_nlinks, ): axes of all links
+ *  link_isjoint: long(max_nlinks, ): 1/0 whether links are joints
  *  N: (int) number of points
- *  nlinks: (int) max number of links on the path
+ *  max_nlinks: (int) max number of links on the path
  *  njoints: (int) number of joints
  *  out: (N, 6, njoints)
  */
@@ -374,7 +373,7 @@ void jacob0(double *T,
             long *link_axes,
             long *link_isjoint, 
             int N, 
-            int nlinks, 
+            int max_nlinks, 
             int njoints, 
             double *out)
 {
@@ -385,10 +384,10 @@ void jacob0(double *T,
     cudaMalloc((void**)&d_T, sizeof(double) * N * 16);
     cudaMalloc((void**)&d_tool, sizeof(double) * N * 16);
     cudaMalloc((void**)&d_etool, sizeof(double) * N * 16);
-    cudaMalloc((void**)&d_link_A, sizeof(double) * nlinks * 16);
+    cudaMalloc((void**)&d_link_A, sizeof(double) * max_nlinks * 16);
     cudaMalloc((void**)&d_nlinks_pt, sizeof(long) * N);
-    cudaMalloc((void**)&d_link_axes, sizeof(long) * nlinks);
-    cudaMalloc((void**)&d_link_isjoint, sizeof(long) * nlinks);
+    cudaMalloc((void**)&d_link_axes, sizeof(long) * max_nlinks);
+    cudaMalloc((void**)&d_link_isjoint, sizeof(long) * max_nlinks);
     cudaMalloc((void**)&d_out, sizeof(double) * N * 6 * njoints);
 
 
@@ -396,10 +395,10 @@ void jacob0(double *T,
     cudaMemcpy(d_T, T, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_tool, tool, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_etool, etool, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_link_A, link_A, sizeof(double) * nlinks * 16, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_link_A, link_A, sizeof(double) * max_nlinks * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_nlinks_pt, nlinks_pt, sizeof(long) * N, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_link_axes, link_axes, sizeof(long) * nlinks, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_link_isjoint, link_isjoint, sizeof(long) * nlinks, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_link_axes, link_axes, sizeof(long) * max_nlinks, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_link_isjoint, link_isjoint, sizeof(long) * max_nlinks, cudaMemcpyHostToDevice);
     cudaMemcpy(d_out, out, sizeof(double) * N * 6 * njoints, cudaMemcpyHostToDevice);
 
 
@@ -414,7 +413,6 @@ void jacob0(double *T,
                                       d_link_axes,
                                       d_link_isjoint,
                                       N,
-                                      nlinks,
                                       njoints,
                                       d_out);
 

@@ -15,8 +15,13 @@ from numba import vectorize
 
 visualize = True
 use_mesh = True
-parallel_pts = True
+parallel_pts = False
 parallel_links = False
+parallel_Ts = True
+# parallel_pts = False
+# parallel_links = True
+# parallel_Ts = False
+
 fknm_ = None
 
 
@@ -28,6 +33,15 @@ def vmatmul(mat1, mat2):
     # mat2: (N, b)
     # out: (N, a)
     return np.matmul(mat1, mat2[:, :, None]).squeeze(-1)
+
+def vmmatmul(mat1, mat2):
+    # mat1: (N, a, ..., b)
+    # mat2: (N, b)
+    # out: (N, a, ...)
+    mat2 = mat2[:, None, :, None]
+    while len(mat2.shape) < len(mat1.shape):
+        mat2 = mat2[:, None]
+    return np.matmul(mat1, mat2).squeeze(-1)
 
 def vrepeat(vec, N):
     # vec: (...)
@@ -62,19 +76,19 @@ def jacob0_pts_vec(robot, link, pts, jacob_vec, qt=None, verbose=False):
     if fknm_ is None:
         fknm_=np.ctypeslib.load_library('roboticstoolbox/cuda/fknm','.')
     # Parallel, use cuda
-    num_pts = len(pts)
-    pts_tool = vrepeat(np.eye(4), num_pts)
+    N = len(pts)
+    pts_tool = vrepeat(np.eye(4), N)
     pts_tool[:, :3, 3] = pts
     link_base = robot.fkine(qt, end=link)
     # pts_mat = np.array((link_base @ se3_pts).A)
     # pts_mat = np.array(link_base.A.dot(pts_tool).swapaxes(0, 1), order='C')
     # pts_mat = np.einsum('ij,ljk->lik', link_base.A, pts_tool)
     # pts_mat = np.ascontiguousarray(link_base.A.dot(pts_tool).swapaxes(0, 1))
-    pts_mat = np.matmul(vrepeat(link_base.A, num_pts), pts_tool)
+    pts_mat = np.matmul(vrepeat(link_base.A, N), pts_tool)
 
-    # e_pts = np.zeros((num_pts, 3))
+    # e_pts = np.zeros((N, 3))
     # pts_etool = np.array(SE3(e_pts).A)
-    pts_etool = vrepeat(np.eye(4), num_pts)
+    pts_etool = vrepeat(np.eye(4), N)
     link_As = []
     link_axes = []
     link_isjoint = []
@@ -86,7 +100,7 @@ def jacob0_pts_vec(robot, link, pts, jacob_vec, qt=None, verbose=False):
         link_axes.append(axis)
         link_isjoint.append(link.isjoint)
     # print(nlinks)
-    nlinks_pt = np.ones(num_pts, dtype=int) * nlinks
+    nlinks_pt = np.ones(N, dtype=int) * nlinks
     link_As = np.array(link_As)
     link_axes = np.array(link_axes, dtype=int)
     link_isjoint = np.array(link_isjoint, dtype=int)
@@ -101,30 +115,31 @@ def jacob0_pts_vec(robot, link, pts, jacob_vec, qt=None, verbose=False):
         print(f"jacob_vec shape {jacob_vec.shape}")
         print(f"nlinks {nlinks}")
         print(f"njoints {njoints}")
-        print(f"num_pts {num_pts}")
+        print(f"N {N}")
 
     with Profiler("vec 2", enable=False):
     # with Profiler("vec 2"):
         fknm_.jacob0(pts_mat.ctypes.data_as(ct.c_void_p),
                      pts_tool.ctypes.data_as(ct.c_void_p),
                      pts_etool.ctypes.data_as(ct.c_void_p),
-                     link_As.ctypes.data_as(ct.c_void_p),
+                     # link_As.ctypes.data_as(ct.c_void_p),t 
+                     ct.c_void_p(link_As.ctypes.data), 
                      nlinks_pt.ctypes.data_as(ct.c_void_p),
                      link_axes.ctypes.data_as(ct.c_void_p),
                      link_isjoint.ctypes.data_as(ct.c_void_p),
-                     ct.c_int(num_pts),
+                     ct.c_int(N),
                      ct.c_int(nlinks),
                      ct.c_int(njoints),
                      jacob_vec.ctypes.data_as(ct.c_void_p))
 
 
-def jacob0_links_vec(robot, link_bases, pts, jacob_vec, qt=None, verbose=False):
+def jacob0_vec(robot, nq, njoints, link_bases, pts, jacob_vec, qt=None, verbose=False):
     """ 
     Parallel, use CUDA
-    :param link_bases: (cdim, 4, 4)
-    :param pts: (num, 3) xyz positions of pts
+    :param link_bases: (nq * njoints, 4, 4)
+    :param pts: (nq * njoints * num_pts, 3) xyz positions of pts
     :param q: (cdim,) joint configurations
-    :param jacob_vec: (num, 6, njoints)
+    :param jacob_vec: (nq * njoints * num_pts, 6, njoints)
     """
     import ctypes as ct
     global fknm_
@@ -133,17 +148,20 @@ def jacob0_links_vec(robot, link_bases, pts, jacob_vec, qt=None, verbose=False):
     if fknm_ is None:
         fknm_=np.ctypeslib.load_library('roboticstoolbox/cuda/fknm','.')
     # Parallel, use cuda
-    num_pts = len(pts)
-    num_points_per_link = int(num_pts / len(link_bases))
-    pts_tool = vrepeat(np.eye(4), num_pts)
+    N = len(pts)
+    num_pts = int(N / len(link_bases))
+    pts_tool = vrepeat(np.eye(4), N)
     pts_tool[:, :3, 3] = pts
-    pts_mat = np.matmul(np.repeat(link_bases, num_points_per_link, axis=0), pts_tool)
-    pts_etool = vrepeat(np.eye(4), num_pts)
+    r_bases = np.repeat(link_bases[:, None], num_pts, axis=1) # (nq * njoints, num_pts, 4, 4)
+    r_bases = r_bases.reshape(-1, 4, 4) # (nq * njoints * num_pts, 4, 4)
+    pts_mat = np.matmul(r_bases, pts_tool) # (nq * njoints * num_pts, 4, 4)
+    pts_etool = vrepeat(np.eye(4), N)
     link_As = []
     link_axes = []
     link_isjoint = []
     path, njoints, _ = robot.get_path()
     nlinks = len(path)
+    nlinks_pt = []
     for il, link in enumerate(path):
         axis = get_axis(link)
         link_As.append(link.A(qt[link.jindex]).A)
@@ -153,6 +171,7 @@ def jacob0_links_vec(robot, link_bases, pts, jacob_vec, qt=None, verbose=False):
     link_As = np.array(link_As)
     link_axes = np.array(link_axes, dtype=int)
     link_isjoint = np.array(link_isjoint, dtype=int)
+    nlinks_pt = np.tile(np.arange(1, njoints + 1, dtype=int).repeat(num_pts), nq)
 
     if verbose:
         print(f"pts shape {pts_mat.shape}")
@@ -164,17 +183,18 @@ def jacob0_links_vec(robot, link_bases, pts, jacob_vec, qt=None, verbose=False):
         print(f"jacob_vec shape {jacob_vec.shape}")
         print(f"nlinks {nlinks}")
         print(f"njoints {njoints}")
-        print(f"num_pts {num_pts}")
+        print(f"N {N}")
 
     with Profiler("vec 2", enable=False):
     # with Profiler("vec 2"):
         fknm_.jacob0(pts_mat.ctypes.data_as(ct.c_void_p),
                      pts_tool.ctypes.data_as(ct.c_void_p),
                      pts_etool.ctypes.data_as(ct.c_void_p),
-                     link_As.ctypes.data_as(ct.c_void_p),
+                     ct.c_void_p(link_As.ctypes.data),  
+                     nlinks_pt.ctypes.data_as(ct.c_void_p),
                      link_axes.ctypes.data_as(ct.c_void_p),
                      link_isjoint.ctypes.data_as(ct.c_void_p),
-                     ct.c_int(num_pts),
+                     ct.c_int(N),
                      ct.c_int(nlinks),
                      ct.c_int(njoints),
                      jacob_vec.ctypes.data_as(ct.c_void_p))
@@ -250,18 +270,72 @@ def chomp(seed=0):
         nabla_obs = np.zeros(xidim)
         xidd = AA.dot(xi)
         total_cost = 0
-        for i in range(nq): # timestep
-            # qt = xi[cdim * i: cdim * (i+1)]
-            qt = qe
-            if i == 0:
-                qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - qs)
-            elif i == nq - 1:
-                qd = 0.5 * (qe - xi[cdim * (i-1): cdim * (i)])
-            else:
-                qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - xi[cdim * (i-1): cdim * (i)])
 
-            if parallel_links: ## Concate all links together
+        if parallel_Ts:
+            link_base_all = []
+            pts_all = []
+            pts_xyz_all = []
+            for i in range(nq): # timestep
+                qt = xi[cdim * i: cdim * (i+1)]
+                if i == 0:
+                    qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - qs)
+                elif i == nq - 1:
+                    qd = 0.5 * (qe - xi[cdim * (i-1): cdim * (i)])
+                else:
+                    qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - xi[cdim * (i-1): cdim * (i)])
+                for il, link in enumerate(robot.links): # bodypart
+                    k = link.jindex
+                    if k is None:
+                        continue
+                    link_base = robot.fkine(qt, end=link) # x_current, (4, 4)
+                    link_base_all.append(link_base.A)
+                    delta_nabla_obs = np.zeros(k + 1)
+                    mesh = meshes[link.name]
+                    idxs = np.random.choice(np.arange(len(mesh.vertices)), num_pts, replace=False)
+                    pts = mesh.vertices[idxs]
+                    pts_all.append(pts)
+                    pts_se3 = vrepeat(np.eye(4), num_pts)
+                    pts_se3[:, :3, 3] = pts
+                    pts_xyz = link_base.A.dot(pts_se3).swapaxes(0, 1)[:, :3, 3]
+                    pts_xyz_all.append(pts_xyz)
+            link_base_all = np.stack(link_base_all) # (nq * cdim, 4, 4)
+            pts_all = np.concatenate(pts_all) # (nq * cdim * npoints, 3)
+            pts_xyz_all = np.concatenate(pts_xyz_all) # (nq * cdim * npoints, 3)
+            path, njoints, _ = robot.get_path()
+            jacobs = np.zeros((len(pts_all), 6, njoints)) # (nq * cdim * npoints, 6, njoints)
+            jacob0_vec(robot, nq, njoints, link_base_all, pts_all, jacobs, qt)
+            xd = jacobs.dot(qd) # x_delta, (nq * cdim * npoints, 6)
+            vel = np.linalg.norm(xd, axis=1, keepdims=True) # (nq * cdim * npoints, 1)
+            xdn = xd / (vel + 1e-3) # speed normalized, (nq * cdim * npoints, 6)
+            jacobs_ = jacobs.reshape(nq, njoints * num_pts, 6, njoints)
+            xidd = xidd.reshape(nq, njoints) # (nq, njoints)
+            xdd = vmmatmul(jacobs_, xidd).reshape(-1, 6) # second derivative of xi, (nq * cdim * npoints, 6)
+            prj = vrepeat(np.eye(6), nq * num_pts * njoints)
+            prj -= np.matmul(xdn[:, :, None], xdn[:, None, :]) # curvature vector (nq * cdim * npoints, 6, 6)
+            kappa = (vmatmul(prj, xdd) / (vel ** 2 + 1e-3)) # (nq * cdim * npoints, 6)
+            cost = np.sum(pts_xyz_all, axis=1, keepdims=True) # (nq * cdim * npoints, 1)
+            delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
+            delta = vrepeat(delta, nq * num_pts * njoints) # (nq * cdim * npoints, 3, 6)
+            part1 = jacobs.swapaxes(1, 2) # (nq * cdim * npoints, cdim, 6)
+            part2 = vmatmul(prj, delta) - cost * kappa # (nq * cdim * npoints, 6)
+            delta_nabla_obs = vmatmul(part1, part2) * vel # (nq * cdim * npoints, cdim)
+            total_cost += cost.mean() * njoints * nq
 
+            delta_nabla_obs = delta_nabla_obs.reshape(nq, cdim, num_pts, -1)
+            # import pdb; pdb.set_trace()
+            nabla_obs = delta_nabla_obs.mean(axis=(1, 2)).flatten() * njoints
+
+            
+            for i in range(nq): # timestep
+                qt = xi[cdim * i: cdim * (i+1)]
+                # qt = qe
+                if i == 0:
+                    qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - qs)
+                elif i == nq - 1:
+                    qd = 0.5 * (qe - xi[cdim * (i-1): cdim * (i)])
+                else:
+                    qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - xi[cdim * (i-1): cdim * (i)])
+           
                 link_base_t = []
                 pts_t = []
                 pts_xyz_t = []
@@ -284,72 +358,135 @@ def chomp(seed=0):
                 pts_t = np.concatenate(pts_t) # (cdim * npoints, 3)
                 pts_xyz_t = np.concatenate(pts_xyz_t)
                 path, njoints, _ = robot.get_path()
-                jacobs = np.zeros((len(pts_t), 6, njoints))
-                jacob0_links_vec(robot, link_base_t, pts_t, jacobs, qt)
-                # import pdb; pdb.set_trace()
-                xd = jacobs.dot(qd) # x_delta, (N, 6)
-                vel = np.linalg.norm(xd, axis=1, keepdims=True) # (N, 1)
-                xdn = xd / (vel + 1e-3) # speed normalized, (N, 6)
-                xdd = jacobs.dot(xidd[cdim * i: cdim * (i + 1)]) # second derivative of xi, (N, 6)
-                prj = vrepeat(np.eye(6), num_pts * njoints)
-                prj -= np.matmul(xdn[:, :, None], xdn[:, None, :]) # curvature vector (N, 6, 6)
-                kappa = (vmatmul(prj, xdd) / (vel ** 2 + 1e-3)) # (N, 6)
-                cost = np.sum(pts_xyz_t, axis=1, keepdims=True) # (N, 1)
-                delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
-                delta = vrepeat(delta, num_pts * njoints) # (N, 3, 6)
-                part1 = jacobs.swapaxes(1, 2) # (N, cdim, 6)
-                part2 = vmatmul(prj, delta) - cost * kappa # (N, 6)
-                delta_nabla_obs = vmatmul(part1, part2) * vel # (N, cdim)
+                jacobs2 = np.zeros((len(pts_t), 6, njoints))
+                jacob0_vec(robot, 1, njoints, link_base_t, pts_t, jacobs2, qt)
+                # print(np.allclose(jacobs_[i], jacobs2))
+                # print(i)
+                try:
+                    assert np.allclose(jacobs_[i], jacobs2)
+                except:
+                    print(np.max(np.abs(jacobs_[i] - jacobs2)))
+                    import pdb; pdb.set_trace()
+                print(np.max(np.abs(jacobs_[i] - jacobs2)))
+                # # import pdb; pdb.set_trace()
+                # xd = jacobs.dot(qd) # x_delta, (N, 6)
+                # vel = np.linalg.norm(xd, axis=1, keepdims=True) # (N, 1)
+                # xdn = xd / (vel + 1e-3) # speed normalized, (N, 6)
+                # xdd = jacobs.dot(xidd[cdim * i: cdim * (i + 1)]) # second derivative of xi, (N, 6)
+                # prj = vrepeat(np.eye(6), num_pts * njoints)
+                # prj -= np.matmul(xdn[:, :, None], xdn[:, None, :]) # curvature vector (N, 6, 6)
+                # kappa = (vmatmul(prj, xdd) / (vel ** 2 + 1e-3)) # (N, 6)
+                # cost = np.sum(pts_xyz_t, axis=1, keepdims=True) # (N, 1)
+                # delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
+                # delta = vrepeat(delta, num_pts * njoints) # (N, 3, 6)
+                # part1 = jacobs.swapaxes(1, 2) # (N, cdim, 6)
+                # part2 = vmatmul(prj, delta) - cost * kappa # (N, 6)
+                # delta_nabla_obs = vmatmul(part1, part2) * vel # (N, cdim)
 
-                total_cost += cost.mean() * njoints
-                nabla_obs[cdim * i: cdim * (i + 1)] = delta_nabla_obs.mean(axis=0) * njoints
+                # total_cost += cost.mean() * njoints
+                # nabla_obs[cdim * i: cdim * (i + 1)] = delta_nabla_obs.mean(axis=0) * njoints
 
-            else: ## Calculate links in for loop
-                
-                for il, link in enumerate(robot.links): # bodypart
-                    k = link.jindex
-                    if k is None:
-                        continue
+        else:
+            for i in range(nq): # timestep
+                qt = xi[cdim * i: cdim * (i+1)]
+                # qt = qe
+                if i == 0:
+                    qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - qs)
+                elif i == nq - 1:
+                    qd = 0.5 * (qe - xi[cdim * (i-1): cdim * (i)])
+                else:
+                    qd = 0.5 * (xi[cdim * (i+1): cdim * (i+2)] - xi[cdim * (i-1): cdim * (i)])
 
-                    link_base = robot.fkine(qt, end=link) # x_current, (4, 4)
-                    delta_nabla_obs = np.zeros(k + 1)
-                    mesh = meshes[link.name]
-                    idxs = np.random.choice(np.arange(len(mesh.vertices)), num_pts, replace=False)
-                    pts = mesh.vertices[idxs]
-                    pts_se3 = vrepeat(np.eye(4), num_pts)
-                    pts_se3[:, :3, 3] = pts
-                    pts_xyz = link_base.A.dot(pts_se3).swapaxes(0, 1)[:, :3, 3]
+                if parallel_links: ## Concate all links together
 
-                    # with Profiler("Step 1"):
-                    with Profiler("Step 1", enable=False):
-                        path, njoints, _ = robot.get_path(end=link)
-                        jacobs = np.zeros((num_pts, 6, njoints))
-                        if parallel_pts:
-                            jacob0_pts_vec(robot, link, pts, jacobs, qt)
-                        else:
-                            jacob0_pts_loop(robot, link, pts, jacobs, qt) # (N, 6, k + 1)
-                        
-                    # with Profiler("Step 2"):
-                    with Profiler("Step 2", enable=False):
-                        xd = jacobs.dot(qd[:k+1]) # x_delta, (N, 6)
-                        vel = np.linalg.norm(xd, axis=1, keepdims=True) # (N, 1)
-                        xdn = xd / (vel + 1e-3) # speed normalized, (N, 6)
-                        xdd = jacobs.dot(xidd[cdim * i: cdim * i + k + 1]) # second derivative of xi, (N, 6)
-                        prj = vrepeat(np.eye(6), num_pts)
-                        prj -= np.matmul(xdn[:, :, None], xdn[:, None, :]) # curvature vector (N, 6, 6)
-                        kappa = (vmatmul(prj, xdd) / (vel ** 2 + 1e-3)) # (N, 6)
-                        cost = np.sum(pts_xyz, axis=1, keepdims=True) # (N, 1)
-                        # delta := negative gradient of obstacle cost in work space, (6, cdim) 
-                        delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
-                        delta = vrepeat(delta, num_pts) # (N, 3, 6)
-                        # for link in robot.links:
-                        #     cost = get_link_cost(robot, meshes, link)
-                        part1 = jacobs.swapaxes(1, 2) # (N, k + 1, 6)
-                        part2 = vmatmul(prj, delta) - cost * kappa # (N, 6)
-                        delta_nabla_obs = vmatmul(part1, part2) * vel # (N, k + 1)
-                        total_cost += cost.mean()
+                    link_base_t = []
+                    pts_t = []
+                    pts_xyz_t = []
+                    for il, link in enumerate(robot.links): # bodypart
+                        k = link.jindex
+                        if k is None:
+                            continue
+                        link_base = robot.fkine(qt, end=link) # x_current, (4, 4)
+                        link_base_t.append(link_base.A)
+                        delta_nabla_obs = np.zeros(k + 1)
+                        mesh = meshes[link.name]
+                        idxs = np.random.choice(np.arange(len(mesh.vertices)), num_pts, replace=False)
+                        pts = mesh.vertices[idxs]
+                        pts_t.append(pts)
+                        pts_se3 = vrepeat(np.eye(4), num_pts)
+                        pts_se3[:, :3, 3] = pts
+                        pts_xyz = link_base.A.dot(pts_se3).swapaxes(0, 1)[:, :3, 3]
+                        pts_xyz_t.append(pts_xyz)
+                    link_base_t = np.stack(link_base_t) # (cdim, 4, 4)
+                    pts_t = np.concatenate(pts_t) # (cdim * npoints, 3)
+                    pts_xyz_t = np.concatenate(pts_xyz_t)
+                    path, njoints, _ = robot.get_path()
+                    jacobs = np.zeros((len(pts_t), 6, njoints))
+                    jacob0_vec(robot, 1, njoints, link_base_t, pts_t, jacobs, qt)
+                    # import pdb; pdb.set_trace()
+                    xd = jacobs.dot(qd) # x_delta, (N, 6)
+                    vel = np.linalg.norm(xd, axis=1, keepdims=True) # (N, 1)
+                    xdn = xd / (vel + 1e-3) # speed normalized, (N, 6)
+                    xdd = jacobs.dot(xidd[cdim * i: cdim * (i + 1)]) # second derivative of xi, (N, 6)
+                    prj = vrepeat(np.eye(6), num_pts * njoints)
+                    prj -= np.matmul(xdn[:, :, None], xdn[:, None, :]) # curvature vector (N, 6, 6)
+                    kappa = (vmatmul(prj, xdd) / (vel ** 2 + 1e-3)) # (N, 6)
+                    cost = np.sum(pts_xyz_t, axis=1, keepdims=True) # (N, 1)
+                    delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
+                    delta = vrepeat(delta, num_pts * njoints) # (N, 3, 6)
+                    part1 = jacobs.swapaxes(1, 2) # (N, cdim, 6)
+                    part2 = vmatmul(prj, delta) - cost * kappa # (N, 6)
+                    delta_nabla_obs = vmatmul(part1, part2) * vel # (N, cdim)
 
-                    nabla_obs[cdim * i: cdim * i + k + 1] += delta_nabla_obs.mean(axis=0)
+                    total_cost += cost.mean() * njoints
+                    nabla_obs[cdim * i: cdim * (i + 1)] = delta_nabla_obs.mean(axis=0) * njoints
+
+                else: ## Calculate links in for loop
+                    
+                    for il, link in enumerate(robot.links): # bodypart
+                        k = link.jindex
+                        if k is None:
+                            continue
+
+                        link_base = robot.fkine(qt, end=link) # x_current, (4, 4)
+                        delta_nabla_obs = np.zeros(k + 1)
+                        mesh = meshes[link.name]
+                        idxs = np.random.choice(np.arange(len(mesh.vertices)), num_pts, replace=False)
+                        pts = mesh.vertices[idxs]
+                        pts_se3 = vrepeat(np.eye(4), num_pts)
+                        pts_se3[:, :3, 3] = pts
+                        pts_xyz = link_base.A.dot(pts_se3).swapaxes(0, 1)[:, :3, 3]
+
+                        # with Profiler("Step 1"):
+                        with Profiler("Step 1", enable=False):
+                            path, njoints, _ = robot.get_path(end=link)
+                            jacobs = np.zeros((num_pts, 6, njoints))
+                            if parallel_pts:
+                                jacob0_pts_vec(robot, link, pts, jacobs, qt)
+                            else:
+                                jacob0_pts_loop(robot, link, pts, jacobs, qt) # (N, 6, k + 1)
+                            
+                        # with Profiler("Step 2"):
+                        with Profiler("Step 2", enable=False):
+                            xd = jacobs.dot(qd[:k+1]) # x_delta, (N, 6)
+                            vel = np.linalg.norm(xd, axis=1, keepdims=True) # (N, 1)
+                            xdn = xd / (vel + 1e-3) # speed normalized, (N, 6)
+                            xdd = jacobs.dot(xidd[cdim * i: cdim * i + k + 1]) # second derivative of xi, (N, 6)
+                            prj = vrepeat(np.eye(6), num_pts)
+                            prj -= np.matmul(xdn[:, :, None], xdn[:, None, :]) # curvature vector (N, 6, 6)
+                            kappa = (vmatmul(prj, xdd) / (vel ** 2 + 1e-3)) # (N, 6)
+                            cost = np.sum(pts_xyz, axis=1, keepdims=True) # (N, 1)
+                            # delta := negative gradient of obstacle cost in work space, (6, cdim) 
+                            delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
+                            delta = vrepeat(delta, num_pts) # (N, 3, 6)
+                            # for link in robot.links:
+                            #     cost = get_link_cost(robot, meshes, link)
+                            part1 = jacobs.swapaxes(1, 2) # (N, k + 1, 6)
+                            part2 = vmatmul(prj, delta) - cost * kappa # (N, 6)
+                            delta_nabla_obs = vmatmul(part1, part2) * vel # (N, k + 1)
+                            total_cost += cost.mean()
+
+                        nabla_obs[cdim * i: cdim * i + k + 1] += delta_nabla_obs.mean(axis=0)
 
         # dxi = Ainv.dot(lmbda * nabla_smooth)
         dxi = Ainv.dot(nabla_obs + lmbda * nabla_smooth)
