@@ -4,6 +4,7 @@
 
 import importlib
 import roboticstoolbox as rtb
+from roboticstoolbox.tools.profiler import Profiler
 from spatialmath import SE3
 from spatialgeometry import *
 import numpy as np
@@ -14,7 +15,7 @@ from numba import vectorize
 
 visualize = True
 use_mesh = True
-parallel = False
+parallel = True
 fknm_ = None
 
 
@@ -50,13 +51,13 @@ def jacob0_vec(robot, link, pts, qt=None, verbose=False):
     se3_pts = SE3(pts)    
     pts_tool = np.array(se3_pts.A)
     link_base = robot.fkine(qt, end=link)
-    print(f"1: {time.time() - t_start:.3f}\n")
+    # print(f"1: {time.time() - t_start:.3f}\n")
     t_start = time.time()
     # pts_mat = np.array((link_base @ se3_pts).A)
     pts_mat = np.array(link_base.A.dot(np.array(se3_pts.A)).swapaxes(0, 1), order='C')
     e_pts = np.zeros((num_pts, 3))
     pts_etool = np.array(SE3(e_pts).A)    
-    print(f"2: {time.time() - t_start:.3f}\n")
+    # print(f"2: {time.time() - t_start:.3f}\n")
     t_start = time.time()
     link_As = []
     link_axes = []
@@ -143,8 +144,7 @@ def chomp(seed=0):
     lmbda = 1000
     eta = 1000
     iters = 4
-    num_pts = 5
-
+    num_pts = 50
 
     # Make cost field, starting & end points
     cdim = len(qtraj.q[0])
@@ -198,33 +198,34 @@ def chomp(seed=0):
                 idxs = np.random.choice(np.arange(len(mesh.vertices)), num_pts, replace=False)
                 pts = mesh.vertices[idxs]
 
-                if not parallel:
-                    jacobs = jacob0_loop(robot, link, pts, qt)
-                else:
-                    jacobs = jacob0_vec(robot, link, pts, qt)
+                with Profiler("Step 1"):
+                    if not parallel:
+                        jacobs = jacob0_loop(robot, link, pts, qt)
+                    else:
+                        jacobs = jacob0_vec(robot, link, pts, qt)
+                with Profiler("Step 2"):
+                    # TODO: vectorize cost calculation
+                    for j in range(num_pts): 
+                        # For each point: compute Jacobian, compute cost, compute cost gradient
+                        pt_rel = mesh.vertices[j]
+                        pt_tool = link_base @ SE3(pt_rel)
+                        pt_pos = pt_tool.t
 
-                # TODO: vectorize cost calculation
-                for j in range(num_pts): 
-                    # For each point: compute Jacobian, compute cost, compute cost gradient
-                    pt_rel = mesh.vertices[j]
-                    pt_tool = link_base @ SE3(pt_rel)
-                    pt_pos = pt_tool.t
+                        JJ = robot.jacob0(qt, end=link, tool=SE3(pt_rel)) # (k, 6)                
+                        xd = JJ.dot(qd[:k+1]) # x_delta
+                        vel = np.linalg.norm(xd)                 
+                        xdn = xd / (vel + 1e-3) # speed normalized
+                        xdd = JJ.dot(xidd[cdim * i: cdim * i + k + 1]) # second derivative of xi
+                        prj = np.eye(6) - xdn[:, None].dot(xdn[:, None].T) # curvature vector (6, 6)
+                        kappa = (prj.dot(xdd) / (vel ** 2 + 1e-3)) # (6,)
 
-                    JJ = robot.jacob0(qt, end=link, tool=SE3(pt_rel)) # (k, 6)                
-                    xd = JJ.dot(qd[:k+1]) # x_delta
-                    vel = np.linalg.norm(xd)                 
-                    xdn = xd / (vel + 1e-3) # speed normalized
-                    xdd = JJ.dot(xidd[cdim * i: cdim * i + k + 1]) # second derivative of xi
-                    prj = np.eye(6) - xdn[:, None].dot(xdn[:, None].T) # curvature vector (6, 6)
-                    kappa = (prj.dot(xdd) / (vel ** 2 + 1e-3)) # (6,)
-
-                    cost = np.sum(pt_pos)
-                    total_cost += cost / num_pts
-                    # delta := negative gradient of obstacle cost in work space, (6, cdim) 
-                    delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
-                    # for link in robot.links:
-                    #     cost = get_link_cost(robot, meshes, link)
-                    delta_nabla_obs += JJ.T.dot(vel).dot(prj.dot(delta) - cost * kappa)
+                        cost = np.sum(pt_pos)
+                        total_cost += cost / num_pts
+                        # delta := negative gradient of obstacle cost in work space, (6, cdim) 
+                        delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
+                        # for link in robot.links:
+                        #     cost = get_link_cost(robot, meshes, link)
+                        delta_nabla_obs += JJ.T.dot(vel).dot(prj.dot(delta) - cost * kappa)
                 
                 nabla_obs[cdim * i: cdim * i + k + 1] += (delta_nabla_obs / num_pts)
 
@@ -399,5 +400,5 @@ def get_axis(link):
 
 
 if __name__ == "__main__":
-    # chomp()
-    test_parallel()
+    chomp()
+    # test_parallel()
