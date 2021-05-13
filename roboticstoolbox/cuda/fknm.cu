@@ -380,7 +380,7 @@ void jacob0(double *T,
             int njoints, 
             double *out)
 {
-    int block_size = 1024;
+    int block_size = 768;
     int grid_size = ((N + block_size) / block_size);
     // printf("Block size %d N %d gid size %d\n", block_size, N, grid_size);
 

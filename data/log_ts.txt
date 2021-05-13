@@ -1,0 +1,19 @@
+Before: complete: 31.35 fps, 0.03190 seconds
+Main: complete: 6.25 fps, 0.16009 seconds
+After: complete: 73.19 fps, 0.01366 seconds
+Iteration 0 total cost 257.1216948748787
+Iteration TS: complete: 4.74 fps, 0.21106 seconds
+Before: complete: 30.50 fps, 0.03279 seconds
+Main: complete: 11.04 fps, 0.09056 seconds
+After: complete: 76.00 fps, 0.01316 seconds
+Iteration 1 total cost 295.97342623127486
+Iteration TS: complete: 7.06 fps, 0.14172 seconds
+Before: complete: 30.36 fps, 0.03294 seconds
+Main: complete: 12.72 fps, 0.07860 seconds
+After: complete: 73.87 fps, 0.01354 seconds
+Iteration 2 total cost 316.9859785682669
+Iteration TS: complete: 7.66 fps, 0.13047 seconds
+Before: complete: 30.62 fps, 0.03265 seconds
+Main: complete: 11.67 fps, 0.08572 seconds
+After: complete: 74.26 fps, 0.01347 seconds
+Iteration 3 total cost 220.9877289186907

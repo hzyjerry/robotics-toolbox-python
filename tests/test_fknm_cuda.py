@@ -39,7 +39,7 @@ def test_vec_ts():
     lmbda = 1000
     eta = 1000
     iters = 4
-    num_pts = 10
+    num_pts = 200
     # Make cost field, starting & end points
     cdim = len(qtraj.q[0])
     xidim = cdim * nq
@@ -62,15 +62,26 @@ def test_vec_ts():
     AA /= dt * dt * (nq + 1)
     Ainv = np.linalg.pinv(AA)
     for t in range(iters):
+        pts_all = []
+        for il, link in enumerate(robot.links):
+            k = link.jindex
+            if k is None:
+                continue
+            mesh = meshes[link.name]
+            idxs = np.random.choice(np.arange(len(mesh.vertices)), num_pts, replace=False)
+            pts = mesh.vertices[idxs]
+            pts_all.append(pts)
+
         nabla_smooth = AA.dot(xi) + bb
         nabla_obs = np.zeros(xidim)
         xidd = AA.dot(xi)
         total_cost = 0
 
         link_base_all = []
-        pts_all = []
         pts_xyz_all = []
         qd_all = []
+        jacobs2s = []
+        robot_idxs = {}                    
         for i in range(nq): # timestep
             qt = xi[cdim * i: cdim * (i+1)]
             if i == 0:
@@ -87,23 +98,21 @@ def test_vec_ts():
                 link_base = robot.fkine(qt, end=link) # x_current, (4, 4)
                 link_base_all.append(link_base.A)
                 delta_nabla_obs = np.zeros(k + 1)
-                mesh = meshes[link.name]
-                idxs = np.random.choice(np.arange(len(mesh.vertices)), num_pts, replace=False)
-                pts = mesh.vertices[idxs]
-                pts_all.append(pts)
                 pts_se3 = vrepeat(np.eye(4), num_pts)
-                pts_se3[:, :3, 3] = pts
+                pts_se3[:, :3, 3] = pts_all[k]
                 pts_xyz = link_base.A.dot(pts_se3).swapaxes(0, 1)[:, :3, 3]
                 pts_xyz_all.append(pts_xyz)
 
         link_base_all = np.stack(link_base_all) # (nq * cdim, 4, 4)
-        pts_all = np.concatenate(pts_all) # (nq * cdim * num_pts, 3)
+        pts_all_ = np.concatenate([pts_all] * nq).reshape(-1, 3) # (nq * cdim * num_pts, 3)
         pts_xyz_all = np.concatenate(pts_xyz_all) # (nq * cdim * num_pts, 3)
         qd_all = np.stack(qd_all) # (nq, cdim)
         path, njoints, _ = robot.get_path()
         assert njoints == cdim
-        jacobs = np.zeros((len(pts_all), 6, cdim)) # (nq * cdim * num_pts, 6, cdim)
-        jacob0_vec(robot, nq, cdim, link_base_all, pts_all, jacobs, xi)
+        jacobs = np.zeros((len(pts_all_), 6, cdim)) # (nq * cdim * num_pts, 6, cdim)
+        # import pdb; pdb.set_trace()
+        jacob0_vec(robot, nq, cdim, link_base_all, pts_all_, jacobs, xi)
+        import pdb; pdb.set_trace()
         jacobs = jacobs.reshape(nq, cdim * num_pts, 6, cdim)
         jacobs_ = jacobs.reshape(nq, cdim, num_pts, 6, cdim) # (nq, cdim, num_pts, 6, cdim)
         xd = vmmatmul(jacobs_, qd_all).reshape(-1, 6) # x_delta, (nq * cdim * num_pts, 6)
@@ -151,7 +160,8 @@ def test_vec_ts():
                 link_base_t.append(link_base.A)
                 mesh = meshes[link.name]
                 pts_se3 = vrepeat(np.eye(4), num_pts)
-                pts = pts_all.reshape(nq, cdim, num_pts, 3)[i, k]
+                pts = pts_all[k]
+                # pts = pts_all.reshape(nq, cdim, num_pts, 3)[i, k]
                 pts_se3[:, :3, 3] = pts
                 pts_t.append(pts)
                 pts_xyz = link_base.A.dot(pts_se3).swapaxes(0, 1)[:, :3, 3]
@@ -216,7 +226,7 @@ def test_vec_links():
     lmbda = 1000
     eta = 1000
     iters = 4
-    num_pts = 10
+    num_pts = 200
     # Make cost field, starting & end points
     cdim = len(qtraj.q[0])
     xidim = cdim * nq
@@ -374,7 +384,7 @@ def test_vec_points():
     lmbda = 1000
     eta = 1000
     iters = 4
-    num_pts = 10
+    num_pts = 200
     # Make cost field, starting & end points
     cdim = len(qtraj.q[0])
     xidim = cdim * nq
