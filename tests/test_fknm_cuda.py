@@ -103,15 +103,15 @@ def test_vec_ts():
         path, njoints, _ = robot.get_path()
         assert njoints == cdim
         jacobs = np.zeros((len(pts_all), 6, cdim)) # (nq * cdim * num_pts, 6, cdim)
-        jacob0_vec(robot, nq, cdim, link_base_all, pts_all, jacobs, qt)
+        jacob0_vec(robot, nq, cdim, link_base_all, pts_all, jacobs, xi)
         jacobs = jacobs.reshape(nq, cdim * num_pts, 6, cdim)
         jacobs_ = jacobs.reshape(nq, cdim, num_pts, 6, cdim) # (nq, cdim, num_pts, 6, cdim)
         xd = vmmatmul(jacobs_, qd_all).reshape(-1, 6) # x_delta, (nq * cdim * num_pts, 6)
         jacobs = jacobs_.reshape(-1, 6, cdim) # (nq * cdim * num_pts, 6, cdim)
         vel = np.linalg.norm(xd, axis=-1, keepdims=True) # (nq * cdim * npoints, 1)
         xdn = xd / (vel + 1e-3) # speed normalized, (nq * cdim * num_pts, 6)
-        xidd = xidd.reshape(nq, cdim) # (nq, cdim)
-        xdd = vmmatmul(jacobs_, xidd).reshape(-1, 6) # second derivative of xi, (nq * cdim * num_pts, 6)
+        xidd_ = xidd.reshape(nq, cdim) # (nq, cdim)
+        xdd = vmmatmul(jacobs_, xidd_).reshape(-1, 6) # second derivative of xi, (nq * cdim * num_pts, 6)
         prj = vrepeat(np.eye(6), nq * cdim * num_pts)
         #import pdb; pdb.set_trace()
         prj -= np.matmul(xdn[:, :, None], xdn[:, None, :]) # curvature vector (nq * cdim * num_pts, 6, 6)
@@ -150,11 +150,10 @@ def test_vec_ts():
                 link_base = robot.fkine(qt, end=link) # x_current, (4, 4)
                 link_base_t.append(link_base.A)
                 mesh = meshes[link.name]
-                idxs = np.random.choice(np.arange(len(mesh.vertices)), num_pts, replace=False)
-                pts = mesh.vertices[idxs]
-                pts_t.append(pts)
                 pts_se3 = vrepeat(np.eye(4), num_pts)
+                pts = pts_all.reshape(nq, cdim, num_pts, 3)[i, k]
                 pts_se3[:, :3, 3] = pts
+                pts_t.append(pts)
                 pts_xyz = link_base.A.dot(pts_se3).swapaxes(0, 1)[:, :3, 3]
                 pts_xyz_t.append(pts_xyz)
             link_base_t = np.stack(link_base_t) # (cdim, 4, 4)
@@ -164,27 +163,30 @@ def test_vec_ts():
             jacobs1 = np.zeros((len(pts_t), 6, njoints))
             jacob0_vec(robot, 1, njoints, link_base_t, pts_t, jacobs1, qt)
             
+            assert np.allclose(jacobs_[i].reshape(cdim * num_pts, 6, cdim), jacobs1)
+
+            xd2 = jacobs1.dot(qd) # x_delta, (N, 6)
             try:
-                assert np.allclose(jacobs_[i].reshape(-1, 6, cdim), jacobs1)
+                assert np.allclose(xd2, xd.reshape(nq, cdim * num_pts, -1)[i])
             except:
                 import pdb; pdb.set_trace()
+            vel2 = np.linalg.norm(xd2, axis=1, keepdims=True) # (N, 1)
+            assert np.allclose(vel2, vel.reshape(nq, cdim * num_pts, -1)[i])
+            xdn2 = xd2 / (vel2 + 1e-3) # speed normalized, (N, 6)
+            assert np.allclose(xdn2, xdn.reshape(nq, cdim * num_pts, -1)[i])
+            xdd2 = jacobs1.dot(xidd[cdim * i: cdim * (i + 1)]) # second derivative of xi, (N, 6)
+            prj2 = vrepeat(np.eye(6), num_pts * njoints)
+            prj2 -= np.matmul(xdn2[:, :, None], xdn2[:, None, :]) # curvature vector (N, 6, 6)
+            kappa2 = (vmatmul(prj2, xdd2) / (vel2 ** 2 + 1e-3)) # (N, 6)
+            cost2 = np.sum(pts_xyz_t, axis=1, keepdims=True) # (N, 1)
+            delta2 = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
+            delta2 = vrepeat(delta2, num_pts * njoints) # (N, 3, 6)
+            part12 = jacobs1.swapaxes(1, 2) # (N, cdim, 6)
+            part22 = vmatmul(prj2, delta2) - cost2 * kappa2 # (N, 6)
+            delta_nabla_obs2 = vmatmul(part12, part22) * vel2 # (N, cdim)
+            nabla_obs2[cdim * i: cdim * (i + 1)] = delta_nabla_obs2.mean(axis=0) * njoints
 
-            xd = jacobs1.dot(qd) # x_delta, (N, 6)
-            vel = np.linalg.norm(xd, axis=1, keepdims=True) # (N, 1)
-            xdn = xd / (vel + 1e-3) # speed normalized, (N, 6)
-            xdd = jacobs1.dot(xidd[cdim * i: cdim * (i + 1)]) # second derivative of xi, (N, 6)
-            prj = vrepeat(np.eye(6), num_pts * njoints)
-            prj -= np.matmul(xdn[:, :, None], xdn[:, None, :]) # curvature vector (N, 6, 6)
-            kappa = (vmatmul(prj, xdd) / (vel ** 2 + 1e-3)) # (N, 6)
-            cost = np.sum(pts_xyz_t, axis=1, keepdims=True) # (N, 1)
-            delta = -1 * np.concatenate([[1, 1, 0], np.zeros(3)])
-            delta = vrepeat(delta, num_pts * njoints) # (N, 3, 6)
-            part1 = jacobs1.swapaxes(1, 2) # (N, cdim, 6)
-            part2 = vmatmul(prj, delta) - cost * kappa # (N, 6)
-            delta_nabla_obs = vmatmul(part1, part2) * vel # (N, cdim)
-            nabla_obs1[cdim * i: cdim * (i + 1)] = delta_nabla_obs.mean(axis=0) * njoints
-
-
+        assert np.allclose(nabla_obs, nabla_obs2)
 
 
 def test_vec_links():

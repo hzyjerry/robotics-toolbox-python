@@ -135,7 +135,7 @@ def jacob0_vec(robot, nq, njoints, link_bases, pts, jacob_vec, qt=None, verbose=
     import ctypes as ct
     global fknm_
     if qt is None:
-        qt = robot.q
+        qt = np.tile(np.array(robot.q), nq)
     if fknm_ is None:
         fknm_=np.ctypeslib.load_library('roboticstoolbox/cuda/fknm','.')
     # Parallel, use cuda
@@ -158,24 +158,25 @@ def jacob0_vec(robot, nq, njoints, link_bases, pts, jacob_vec, qt=None, verbose=
     path, njoints, _ = robot.get_path(end)
     nlinks = len(path)
     nlinks_pt = []
-    curr_links, curr_link_A = 0, SE3()
-    j = 0
-    for il, link in enumerate(path):
-        axis = get_axis(link)
-        curr_links += 1
-        if link.isjoint:
-            link_As.append(link.A(qt[link.jindex]).A)
-            nlinks_pt.append(curr_links)
-        else:
-            link_As.append(link.A().A)
-        link_axes.append(axis)
-        link_isjoint.append(link.isjoint)
-    # print(nlinks)
-    link_As = np.array(link_As)[None, :].repeat(N, axis=0)
+    for iq in range(nq):
+        curr_links = 0
+        qt_i = qt[njoints * iq: njoints * (iq + 1)]
+        for il, link in enumerate(path):
+            axis = get_axis(link)
+            curr_links += 1
+            if link.isjoint:
+                link_As.append(link.A(qt_i[link.jindex]).A)
+                nlinks_pt.append(curr_links)
+            else:
+                link_As.append(link.A().A)
+            if iq == 0: # only need 1 copy
+                link_axes.append(axis)
+                link_isjoint.append(link.isjoint)
+    link_As = np.array(link_As).reshape(nq, nlinks, 4, 4) # (nq, nlinks, 4, 4)
+    link_As = link_As.repeat(njoints * num_pts, axis=0) # (nq * njoints * num_pts, nlinks, 4, 4)
     link_axes = np.array(link_axes, dtype=int)
     link_isjoint = np.array(link_isjoint, dtype=int)
     nlinks_pt = np.tile(np.array(nlinks_pt, dtype=int).repeat(num_pts), nq)
-    # import pdb; pdb.set_trace()
     if verbose:
         print(f"pts shape {pts_mat.shape}")
         print(f"pts_tool shape {pts_tool.shape}")
@@ -201,7 +202,6 @@ def jacob0_vec(robot, nq, njoints, link_bases, pts, jacob_vec, qt=None, verbose=
                      ct.c_int(nlinks),
                      ct.c_int(njoints),
                      jacob_vec.ctypes.data_as(ct.c_void_p))
-
 
 def get_axis(link):
     axis = None

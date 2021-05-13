@@ -10,7 +10,8 @@ __device__ void mult(double *A, double *B, double *C);
 __device__ void copy(double *A, double *B);
 __device__ void _eye(double *data);
 
-
+// TODO: device level link class
+// TODO: block >= 2048 error
 
 
 /* 
@@ -18,7 +19,7 @@ __device__ void _eye(double *data);
  *  T: double(N, 4, 4) the final transform matrix of all points (shared)
  *  tool: double(N, 4, 4) the tool transform matrix of all points (shared)
  *  nlinks_pt: long(N,): the number of links associated with each (shared)
- *  link_A: double(max_nlinks, 4, 4) the transformation matrix of all joints
+ *  link_A: double(N, max_nlinks, 4, 4) the transformation matrix of all joints
  *  link_axes: long(max_nlinks, ): axes of all links
  *  link_isjoint: long(max_nlinks, ): 1/0 whether links are joints
  *  N: (int) number of points
@@ -379,7 +380,7 @@ void jacob0(double *T,
             int njoints, 
             double *out)
 {
-    int block_size = 256;
+    int block_size = 1024;
     int grid_size = ((N + block_size) / block_size);
     // printf("Block size %d N %d gid size %d\n", block_size, N, grid_size);
 
