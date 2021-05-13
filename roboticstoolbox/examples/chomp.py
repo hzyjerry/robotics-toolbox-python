@@ -19,6 +19,18 @@ parallel = True
 fknm_ = None
 
 
+def vmatmul(mat1, mat2):
+    # mat1: (N, a, b)
+    # mat2: (N, b)
+    # out: (N, a)
+    return np.matmul(mat1, mat2[:, :, None]).squeeze(-1)
+
+def vrepeat(vec, N):
+    # vec: (...)
+    # out: (N, ...)
+    return np.repeat(vec[None, :], N, axis=0)
+
+
 def jacob0_loop(robot, link, pts, jacob_vec, qt=None):
     """ 
     Non-parallel, use for loop
@@ -47,18 +59,18 @@ def jacob0_vec(robot, link, pts, jacob_vec, qt=None, verbose=False):
         fknm_=np.ctypeslib.load_library('roboticstoolbox/cuda/fknm','.')
     # Parallel, use cuda
     num_pts = len(pts)
-    pts_tool = np.repeat(np.eye(4)[None, :], len(pts), axis=0)
+    pts_tool = vrepeat(np.eye(4), len(pts))
     pts_tool[:, :3, 3] = pts
     link_base = robot.fkine(qt, end=link)
     # pts_mat = np.array((link_base @ se3_pts).A)
     # pts_mat = np.array(link_base.A.dot(pts_tool).swapaxes(0, 1), order='C')
     # pts_mat = np.einsum('ij,ljk->lik', link_base.A, pts_tool)
     # pts_mat = np.ascontiguousarray(link_base.A.dot(pts_tool).swapaxes(0, 1))
-    pts_mat = np.matmul(np.repeat(link_base.A[None, :], len(pts), axis=0), pts_tool)
+    pts_mat = np.matmul(vrepeat(link_base.A, len(pts)), pts_tool)
 
     # e_pts = np.zeros((num_pts, 3))
     # pts_etool = np.array(SE3(e_pts).A)
-    pts_etool = np.repeat(np.eye(4)[None, :], len(pts), axis=0)
+    pts_etool = vrepeat(np.eye(4), len(pts))
     link_As = []
     link_axes = []
     link_isjoint = []
@@ -171,16 +183,6 @@ def chomp(seed=0):
     AA /= dt * dt * (nq + 1)
     Ainv = np.linalg.pinv(AA)
 
-    def vmatmul(mat1, mat2):
-        # mat1: (N, a, b)
-        # mat2: (N, b)
-        # out: (N, a)
-        return np.matmul(mat1, mat2[:, :, None]).squeeze(-1)
-
-    def vrepeat(vec, N):
-        # vec: (...)
-        # out: (N, ...)
-        return np.repeat(vec[None, :], N, axis=0)
 
     for t in range(iters):
         nabla_smooth = AA.dot(xi) + bb
