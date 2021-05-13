@@ -56,6 +56,9 @@ __global__ void _jacob0(double *T,
     T_i = &T[tid * 16];
 
     if (tid >= N) {
+        free(U);
+        free(invU);
+        free(temp);
         return;
     } 
 
@@ -407,7 +410,6 @@ void jacob0(double *T,
                                       njoints,
                                       d_out);
 
-    // cudaDeviceSynchronize();
     // cudaError_t cudaerr = cudaDeviceSynchronize();
     // if (cudaerr != cudaSuccess)
     //     printf("kernel launch failed with error \"%s\".\n",
@@ -416,7 +418,6 @@ void jacob0(double *T,
     // memset(out, 1, N * 6 * njoints);
     // out[0] = 1;
     cudaMemcpy(out, d_out, sizeof(double) * N * 6 * njoints, cudaMemcpyDeviceToHost);
-    // printf("Out size %d %d %f %f %f %f %f", N, njoints, d_out[0], d_out[1], d_out[2], d_out[3], d_out[4]);
 
     // Deallocate device memory
     cudaFree(d_T);
