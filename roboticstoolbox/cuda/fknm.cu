@@ -15,13 +15,13 @@ __device__ void _eye(double *data);
 
 /* 
  * Params
- *  T: (N, 4, 4) the final transform matrix of all points (shared)
- *  tool: (N, 4, 4) the tool transform matrix of all points (shared)
- *  link_A: (nlinks, 4, 4) the transformation matrix of all joints
- *  link_axes: (nlinks, ): axes of all links
- *  link_isjoint: (nlinks, ): 1/0 whether links are joints
+ *  T: double(N, 4, 4) the final transform matrix of all points (shared)
+ *  tool: double(N, 4, 4) the tool transform matrix of all points (shared)
+ *  nlinks_pt: long(N,): the number of links associated with each (shared)
+ *  link_A: double(nlinks, 4, 4) the transformation matrix of all joints
+ *  link_axes: long(nlinks, ): axes of all links
+ *  link_isjoint: long(nlinks, ): 1/0 whether links are joints
  *  N: (int) number of points
- *  nlinks: (int) number of links on the path
  *  njoints: (int) number of joints
  *  out: (N, 6, njoints)
  */
@@ -29,21 +29,21 @@ __global__ void _jacob0(double *T,
                         double *tool, 
                         double *etool, 
                         double *link_A, 
+                        long *nlinks_pt,
                         long *link_axes,
                         long *link_isjoint, 
                         int N, 
-                        int nlinks, 
                         int njoints, 
                         double *out)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    double *T_i; // T
+    double *T_i;
     double *tool_i;
     double *U;
     double *temp;
     double *etool_i;
     double *invU;
-    double *link_iA; // TODO: =ret ?
+    double *link_iA;
     U = (double*) malloc(sizeof(double) * 16);
     invU = (double*) malloc(sizeof(double) * 16);
     temp = (double*) malloc(sizeof(double) * 16);
@@ -60,11 +60,13 @@ __global__ void _jacob0(double *T,
         free(invU);
         free(temp);
         return;
-    } 
+    }
 
+    int nlinks = nlinks_pt[tid];
+    // printf("Hello from tid %d nlinks %d\n", tid, nlinks);
     for (int i = 0; i < nlinks; i++) {
-
         // printf("Hello from tid %d link_i %d link_axis %ld isjoint %ld \n", tid, i, link_axes[i], link_isjoint[i]);
+
         if (link_isjoint[i] == 1) {
             link_iA = &link_A[i * 16];
             mult(U, link_iA, temp);
@@ -352,13 +354,14 @@ extern "C"{
 
 /* 
  * Params
- *  T: (N, 4, 4) the final transform matrix of all points (shared)
- *  tool: (N, 4, 4) the end transform matrix of all points (shared)
- *  link_A: (nlinks, 4, 4) the transformation matrix of all joints
- *  link_axes: (nlinks, ): axes of all links
- *  link_isjoint: (nlinks, ): 1/0 whether links are joints
+ *  T: double(N, 4, 4) the final transform matrix of all points (shared)
+ *  tool: double(N, 4, 4) the tool transform matrix of all points (shared)
+ *  nlinks_pt: long(N,): the number of links associated with each (shared)
+ *  link_A: double(nlinks, 4, 4) the transformation matrix of all joints
+ *  link_axes: long(nlinks, ): axes of all links
+ *  link_isjoint: long(nlinks, ): 1/0 whether links are joints
  *  N: (int) number of points
- *  nlinks: (int) number of links
+ *  nlinks: (int) max number of links on the path
  *  njoints: (int) number of joints
  *  out: (N, 6, njoints)
  */
@@ -366,6 +369,7 @@ void jacob0(double *T,
             double *tool,
             double *etool,
             double *link_A, 
+            long *nlinks_pt,
             long *link_axes,
             long *link_isjoint, 
             int N, 
@@ -374,13 +378,14 @@ void jacob0(double *T,
             double *out)
 {
     double *d_T, *d_tool, *d_etool, *d_link_A;
-    long *d_link_axes, *d_link_isjoint;
+    long *d_link_axes, *d_link_isjoint, *d_nlinks_pt;
     double *d_out;
 
     cudaMalloc((void**)&d_T, sizeof(double) * N * 16);
     cudaMalloc((void**)&d_tool, sizeof(double) * N * 16);
     cudaMalloc((void**)&d_etool, sizeof(double) * N * 16);
     cudaMalloc((void**)&d_link_A, sizeof(double) * nlinks * 16);
+    cudaMalloc((void**)&d_nlinks_pt, sizeof(long) * N);
     cudaMalloc((void**)&d_link_axes, sizeof(long) * nlinks);
     cudaMalloc((void**)&d_link_isjoint, sizeof(long) * nlinks);
     cudaMalloc((void**)&d_out, sizeof(double) * N * 6 * njoints);
@@ -391,6 +396,7 @@ void jacob0(double *T,
     cudaMemcpy(d_tool, tool, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_etool, etool, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_link_A, link_A, sizeof(double) * nlinks * 16, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_nlinks_pt, nlinks_pt, sizeof(long) * N, cudaMemcpyHostToDevice);
     cudaMemcpy(d_link_axes, link_axes, sizeof(long) * nlinks, cudaMemcpyHostToDevice);
     cudaMemcpy(d_link_isjoint, link_isjoint, sizeof(long) * nlinks, cudaMemcpyHostToDevice);
     cudaMemcpy(d_out, out, sizeof(double) * N * 6 * njoints, cudaMemcpyHostToDevice);
@@ -403,14 +409,14 @@ void jacob0(double *T,
                                       d_tool,
                                       d_etool,
                                       d_link_A, 
+                                      d_nlinks_pt,
                                       d_link_axes,
                                       d_link_isjoint,
                                       N,
-                                      nlinks,
                                       njoints,
                                       d_out);
 
-    // cudaError_t cudaerr = cudaDeviceSynchronize();
+    cudaError_t cudaerr = cudaDeviceSynchronize();
     // if (cudaerr != cudaSuccess)
     //     printf("kernel launch failed with error \"%s\".\n",
     //            cudaGetErrorString(cudaerr));
@@ -422,6 +428,7 @@ void jacob0(double *T,
     // Deallocate device memory
     cudaFree(d_T);
     cudaFree(d_tool);
+    cudaFree(d_nlinks_pt);
     cudaFree(d_etool);
     cudaFree(d_link_A);
     cudaFree(d_link_axes);
