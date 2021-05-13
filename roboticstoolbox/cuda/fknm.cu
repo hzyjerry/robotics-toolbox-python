@@ -44,16 +44,16 @@ __global__ void _jacob0(double *T,
     double *etool_i;
     double *invU;
     double *link_iA; // TODO: =ret ?
-
     U = (double*) malloc(sizeof(double) * 16);
     invU = (double*) malloc(sizeof(double) * 16);
     temp = (double*) malloc(sizeof(double) * 16);
     int j = 0;
 
-    T_i = &T[tid * 16];
     tool_i = &tool[tid * 16];
     etool_i = &etool[tid * 16];
+
     _eye(U);
+    T_i = &T[tid * 16];
 
     if (tid >= N) {
         return;
@@ -329,8 +329,10 @@ __device__ int _inv(double *m, double *invOut)
 
     det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
 
-    if (det == 0)
+    if (det == 0) {
+        free(inv);
         return 0;
+    }
 
     det = 1.0 / det;
 
