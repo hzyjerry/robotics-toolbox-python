@@ -1473,7 +1473,6 @@ class ERobot(BaseERobot):
             tool = SE3()
 
         path, n, _ = self.get_path(end, start)
-
         q = getvector(q, self.n)
 
         if T is None:

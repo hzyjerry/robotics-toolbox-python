@@ -1,1 +1,2 @@
+# nvcc -Wno-deprecated-gpu-targets -Xcompiler -fPIC -shared -o roboticstoolbox/cuda/fknm.so roboticstoolbox/cuda/fknm.cu
 nvcc -Wno-deprecated-gpu-targets -Xcompiler -fPIC -shared -o roboticstoolbox/cuda/fknm.so roboticstoolbox/cuda/fknm.cu

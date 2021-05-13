@@ -17,45 +17,57 @@ __device__ void _eye(double *data);
  * Params
  *  T: (N, 4, 4) the final transform matrix of all points (shared)
  *  tool: (N, 4, 4) the tool transform matrix of all points (shared)
- *  link_A: (cdim, 4, 4) the transformation matrix of all joints
- *  link_axes: (cdim, ): axes of all links
- *  link_isjoint: (cdim, ): 1/0 whether links are joints
+ *  link_A: (nlinks, 4, 4) the transformation matrix of all joints
+ *  link_axes: (nlinks, ): axes of all links
+ *  link_isjoint: (nlinks, ): 1/0 whether links are joints
  *  N: (int) number of points
- *  cdim: (int) number of joints
- *  out: (N, 6, cdim)
+ *  nlinks: (int) number of links on the path
+ *  njoints: (int) number of joints
+ *  out: (N, 6, njoints)
  */
 __global__ void _jacob0(double *T,
                         double *tool, 
-                        double *e_tool, 
+                        double *etool, 
                         double *link_A, 
-                        int *link_axes,
-                        int *link_isjoint, 
+                        long *link_axes,
+                        long *link_isjoint, 
                         int N, 
-                        int cdim, 
+                        int nlinks, 
+                        int njoints, 
                         double *out)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    double *T_i, *tool_i;
-    double *U, *temp, *etool_i;
+    double *T_i; // T
+    double *tool_i;
+    double *U;
+    double *temp;
+    double *etool_i;
     double *invU;
-    double *link_iA;
+    double *link_iA; // TODO: =ret ?
 
-    cudaMalloc((void**)&U, sizeof(double) * 16);
-    cudaMalloc((void**)&invU, sizeof(double) * 16);
-    cudaMalloc((void**)&temp, sizeof(double) * 16);
+    U = (double*) malloc(sizeof(double) * 16);
+    invU = (double*) malloc(sizeof(double) * 16);
+    temp = (double*) malloc(sizeof(double) * 16);
     int j = 0;
 
     T_i = &T[tid * 16];
     tool_i = &tool[tid * 16];
+    etool_i = &etool[tid * 16];
     _eye(U);
-    for (int i = 0; i < cdim; i++) {
 
+    if (tid >= N) {
+        return;
+    } 
+
+    for (int i = 0; i < nlinks; i++) {
+
+        // printf("Hello from tid %d link_i %d link_axis %ld isjoint %ld \n", tid, i, link_axes[i], link_isjoint[i]);
         if (link_isjoint[i] == 1) {
             link_iA = &link_A[i * 16];
             mult(U, link_iA, temp);
             copy(temp, U);
 
-            if (i == cdim - 1) {
+            if (i == nlinks - 1) {
                 mult(U, etool_i, temp);
                 copy(temp, U);
                 mult(U, tool_i, temp);
@@ -65,72 +77,74 @@ __global__ void _jacob0(double *T,
             _inv(U, invU);
             mult(invU, T_i, temp);
 
-            double *out_tid = &out[tid + 16];
+            double *out_tid = &out[tid * 6 * njoints];
 
             if (link_axes[i] == 0) {
-                out_tid[0 * tid + j] = U[0 * 4 + 2] * temp[1 * 4 + 3] - U[0 * 4 + 1] * temp[2 * 4 + 3];
-                out_tid[1 * tid + j] = U[1 * 4 + 2] * temp[1 * 4 + 3] - U[1 * 4 + 1] * temp[2 * 4 + 3];
-                out_tid[2 * tid + j] = U[2 * 4 + 2] * temp[1 * 4 + 3] - U[2 * 4 + 1] * temp[2 * 4 + 3];
-                out_tid[3 * tid + j] = U[0 * 4 + 2];
-                out_tid[4 * tid + j] = U[1 * 4 + 2];
-                out_tid[5 * tid + j] = U[2 * 4 + 2];
+                out_tid[0 * njoints + j] = U[0 * 4 + 2] * temp[1 * 4 + 3] - U[0 * 4 + 1] * temp[2 * 4 + 3];
+                out_tid[1 * njoints + j] = U[1 * 4 + 2] * temp[1 * 4 + 3] - U[1 * 4 + 1] * temp[2 * 4 + 3];
+                out_tid[2 * njoints + j] = U[2 * 4 + 2] * temp[1 * 4 + 3] - U[2 * 4 + 1] * temp[2 * 4 + 3];
+                out_tid[3 * njoints + j] = U[0 * 4 + 2];
+                out_tid[4 * njoints + j] = U[1 * 4 + 2];
+                out_tid[5 * njoints + j] = U[2 * 4 + 2];
             }
             else if (link_axes[i] == 1)
             {
-                out_tid[0 * tid + j] = U[0 * 4 + 0] * temp[2 * 4 + 3] - U[0 * 4 + 2] * temp[0 * 4 + 3];
-                out_tid[1 * tid + j] = U[1 * 4 + 0] * temp[2 * 4 + 3] - U[1 * 4 + 2] * temp[0 * 4 + 3];
-                out_tid[2 * tid + j] = U[2 * 4 + 0] * temp[2 * 4 + 3] - U[2 * 4 + 2] * temp[0 * 4 + 3];
-                out_tid[3 * tid + j] = U[0 * 4 + 1];
-                out_tid[4 * tid + j] = U[1 * 4 + 1];
-                out_tid[5 * tid + j] = U[2 * 4 + 1];
+                out_tid[0 * njoints + j] = U[0 * 4 + 0] * temp[2 * 4 + 3] - U[0 * 4 + 2] * temp[0 * 4 + 3];
+                out_tid[1 * njoints + j] = U[1 * 4 + 0] * temp[2 * 4 + 3] - U[1 * 4 + 2] * temp[0 * 4 + 3];
+                out_tid[2 * njoints + j] = U[2 * 4 + 0] * temp[2 * 4 + 3] - U[2 * 4 + 2] * temp[0 * 4 + 3];
+                out_tid[3 * njoints + j] = U[0 * 4 + 1];
+                out_tid[4 * njoints + j] = U[1 * 4 + 1];
+                out_tid[5 * njoints + j] = U[2 * 4 + 1];
             }
             else if (link_axes[i] == 2)
             {
-                out_tid[0 * tid + j] = U[0 * 4 + 1] * temp[0 * 4 + 3] - U[0 * 4 + 0] * temp[1 * 4 + 3];
-                out_tid[1 * tid + j] = U[1 * 4 + 1] * temp[0 * 4 + 3] - U[1 * 4 + 0] * temp[1 * 4 + 3];
-                out_tid[2 * tid + j] = U[2 * 4 + 1] * temp[0 * 4 + 3] - U[2 * 4 + 0] * temp[1 * 4 + 3];
-                out_tid[3 * tid + j] = U[0 * 4 + 2];
-                out_tid[4 * tid + j] = U[1 * 4 + 2];
-                out_tid[5 * tid + j] = U[2 * 4 + 2];
+                out_tid[0 * njoints + j] = U[0 * 4 + 1] * temp[0 * 4 + 3] - U[0 * 4 + 0] * temp[1 * 4 + 3];
+                out_tid[1 * njoints + j] = U[1 * 4 + 1] * temp[0 * 4 + 3] - U[1 * 4 + 0] * temp[1 * 4 + 3];
+                out_tid[2 * njoints + j] = U[2 * 4 + 1] * temp[0 * 4 + 3] - U[2 * 4 + 0] * temp[1 * 4 + 3];
+                out_tid[3 * njoints + j] = U[0 * 4 + 2];
+                out_tid[4 * njoints + j] = U[1 * 4 + 2];
+                out_tid[5 * njoints + j] = U[2 * 4 + 2];
             }
             else if (link_axes[i] == 3)
             {
-                out_tid[0 * tid + j] = U[0 * 4 + 0];
-                out_tid[1 * tid + j] = U[1 * 4 + 0];
-                out_tid[2 * tid + j] = U[2 * 4 + 0];
-                out_tid[3 * tid + j] = 0.0;
-                out_tid[4 * tid + j] = 0.0;
-                out_tid[5 * tid + j] = 0.0;
+                out_tid[0 * njoints + j] = U[0 * 4 + 0];
+                out_tid[1 * njoints + j] = U[1 * 4 + 0];
+                out_tid[2 * njoints + j] = U[2 * 4 + 0];
+                out_tid[3 * njoints + j] = 0.0;
+                out_tid[4 * njoints + j] = 0.0;
+                out_tid[5 * njoints + j] = 0.0;
             }
             else if (link_axes[i] == 4)
             {
-                out_tid[0 * tid + j] = U[0 * 4 + 1];
-                out_tid[1 * tid + j] = U[1 * 4 + 1];
-                out_tid[2 * tid + j] = U[2 * 4 + 1];
-                out_tid[3 * tid + j] = 0.0;
-                out_tid[4 * tid + j] = 0.0;
-                out_tid[5 * tid + j] = 0.0;
+                out_tid[0 * njoints + j] = U[0 * 4 + 1];
+                out_tid[1 * njoints + j] = U[1 * 4 + 1];
+                out_tid[2 * njoints + j] = U[2 * 4 + 1];
+                out_tid[3 * njoints + j] = 0.0;
+                out_tid[4 * njoints + j] = 0.0;
+                out_tid[5 * njoints + j] = 0.0;
             }
             else if (link_axes[i] == 5)
             {
-                out_tid[0 * tid + j] = U[0 * 4 + 2];
-                out_tid[1 * tid + j] = U[1 * 4 + 2];
-                out_tid[2 * tid + j] = U[2 * 4 + 2];
-                out_tid[3 * tid + j] = 0.0;
-                out_tid[4 * tid + j] = 0.0;
-                out_tid[5 * tid + j] = 0.0;
+                out_tid[0 * njoints + j] = U[0 * 4 + 2];
+                out_tid[1 * njoints + j] = U[1 * 4 + 2];
+                out_tid[2 * njoints + j] = U[2 * 4 + 2];
+                out_tid[3 * njoints + j] = 0.0;
+                out_tid[4 * njoints + j] = 0.0;
+                out_tid[5 * njoints + j] = 0.0;
             }
             j++;
-        } else {
+        } 
+        else 
+        {
             link_iA = &link_A[i * 16];    
             mult(U, link_iA, temp);
             copy(temp, U);
         }
     }
 
-    cudaFree(U);
-    cudaFree(invU);
-    cudaFree(temp);
+    free(U);
+    free(invU);
+    free(temp);
 }
 
 
@@ -197,8 +211,7 @@ __device__ void mult(double *A, double *B, double *C)
 
 __device__ int _inv(double *m, double *invOut)
 {
-    double *inv;
-    cudaMalloc((void**)&inv, sizeof(double) * 16);
+    double *inv = (double*) malloc(sizeof(double) * 16);
     double det;
     int i;
 
@@ -324,7 +337,7 @@ __device__ int _inv(double *m, double *invOut)
     for (i = 0; i < 16; i++)
         invOut[i] = inv[i] * det;
 
-    cudaFree(inv);
+    free(inv);
     return 1;
 }
 
@@ -336,53 +349,51 @@ extern "C"{
  * Params
  *  T: (N, 4, 4) the final transform matrix of all points (shared)
  *  tool: (N, 4, 4) the end transform matrix of all points (shared)
- *  link_A: (cdim, 4, 4) the transformation matrix of all joints
- *  link_axes: (cdim, ): axes of all links
- *  link_isjoint: (cdim, ): 1/0 whether links are joints
+ *  link_A: (nlinks, 4, 4) the transformation matrix of all joints
+ *  link_axes: (nlinks, ): axes of all links
+ *  link_isjoint: (nlinks, ): 1/0 whether links are joints
  *  N: (int) number of points
- *  cdim: (int) number of joints
- *  out: (N, 6, cdim)
+ *  nlinks: (int) number of links
+ *  njoints: (int) number of joints
+ *  out: (N, 6, njoints)
  */
 void jacob0(double *T, 
             double *tool,
             double *etool,
             double *link_A, 
-            int *link_axes,
-            int *link_isjoint, 
+            long *link_axes,
+            long *link_isjoint, 
             int N, 
-            int cdim, 
+            int nlinks, 
+            int njoints, 
             double *out)
-    // affine_T[N]
-    // link_axes[cdim]
-    // link_A[cdim]
-    // link_isjoint[cdim]
-    // out
 {
     double *d_T, *d_tool, *d_etool, *d_link_A;
-    int *d_link_axes, *d_link_isjoint;
+    long *d_link_axes, *d_link_isjoint;
     double *d_out;
 
     cudaMalloc((void**)&d_T, sizeof(double) * N * 16);
     cudaMalloc((void**)&d_tool, sizeof(double) * N * 16);
     cudaMalloc((void**)&d_etool, sizeof(double) * N * 16);
-    cudaMalloc((void**)&d_link_A, sizeof(double) * cdim * 16);
-    cudaMalloc((void**)&d_link_axes, sizeof(int) * cdim);
-    cudaMalloc((void**)&d_link_isjoint, sizeof(int) * cdim);
-    cudaMalloc((void**)&d_out, sizeof(double) * 6 * cdim);
+    cudaMalloc((void**)&d_link_A, sizeof(double) * nlinks * 16);
+    cudaMalloc((void**)&d_link_axes, sizeof(long) * nlinks);
+    cudaMalloc((void**)&d_link_isjoint, sizeof(long) * nlinks);
+    cudaMalloc((void**)&d_out, sizeof(double) * N * 6 * njoints);
 
 
     // Transfer data from host to device memory
     cudaMemcpy(d_T, T, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_tool, tool, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
     cudaMemcpy(d_etool, etool, sizeof(double) * N * 16, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_link_A, link_A, sizeof(double) * cdim * 16, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_link_axes, link_axes, sizeof(int) * cdim, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_link_isjoint, link_isjoint, sizeof(int) * cdim, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_out, out, sizeof(double) * 6 * cdim, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_link_A, link_A, sizeof(double) * nlinks * 16, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_link_axes, link_axes, sizeof(long) * nlinks, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_link_isjoint, link_isjoint, sizeof(long) * nlinks, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_out, out, sizeof(double) * N * 6 * njoints, cudaMemcpyHostToDevice);
 
 
     int block_size = 256;
     int grid_size = ((N + block_size) / block_size);
+    // printf("Block size %d gid size %d\n", block_size, grid_size);
     _jacob0<<<grid_size,block_size>>>(d_T, 
                                       d_tool,
                                       d_etool,
@@ -390,13 +401,20 @@ void jacob0(double *T,
                                       d_link_axes,
                                       d_link_isjoint,
                                       N,
-                                      cdim,
+                                      nlinks,
+                                      njoints,
                                       d_out);
 
-    // memset(out, 1, N * 6 * cdim);
+    // cudaDeviceSynchronize();
+    // cudaError_t cudaerr = cudaDeviceSynchronize();
+    // if (cudaerr != cudaSuccess)
+    //     printf("kernel launch failed with error \"%s\".\n",
+    //            cudaGetErrorString(cudaerr));
+
+    // memset(out, 1, N * 6 * njoints);
     // out[0] = 1;
-    cudaMemcpy(out, d_out, sizeof(double) * 6 * cdim, cudaMemcpyDeviceToHost);
-    printf("Out size %d %d %f %f %f %f %f", N, cdim, out[0], out[1], out[2], out[3], out[4]);
+    cudaMemcpy(out, d_out, sizeof(double) * N * 6 * njoints, cudaMemcpyDeviceToHost);
+    // printf("Out size %d %d %f %f %f %f %f", N, njoints, d_out[0], d_out[1], d_out[2], d_out[3], d_out[4]);
 
     // Deallocate device memory
     cudaFree(d_T);
