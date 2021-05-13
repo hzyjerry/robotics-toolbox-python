@@ -33,6 +33,7 @@ __global__ void _jacob0(double *T,
                         long *link_axes,
                         long *link_isjoint, 
                         int N, 
+                        int nlinks, 
                         int njoints, 
                         double *out)
 {
@@ -62,7 +63,7 @@ __global__ void _jacob0(double *T,
         return;
     }
 
-    int nlinks = nlinks_pt[tid];
+    // int nlinks = nlinks_pt[tid];
     // printf("Hello from tid %d nlinks %d\n", tid, nlinks);
     for (int i = 0; i < nlinks; i++) {
         // printf("Hello from tid %d link_i %d link_axis %ld isjoint %ld \n", tid, i, link_axes[i], link_isjoint[i]);
@@ -413,6 +414,7 @@ void jacob0(double *T,
                                       d_link_axes,
                                       d_link_isjoint,
                                       N,
+                                      nlinks,
                                       njoints,
                                       d_out);
 
