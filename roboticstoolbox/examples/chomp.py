@@ -14,11 +14,8 @@ import time
 import math
 from numba import vectorize 
 
-visualize = True
-verbose = False
-use_mesh = True
 
-MODES = {"PTS", "LINKS", "TS"}
+MODES = {"PTS", "LINKS", "TS", "NONE"}
 """
 Speed:
 
@@ -45,9 +42,10 @@ LINKS: num_pts=50, block_size=768, nq=50
 
 fknm_ = None
 
-def chomp(mode, seed=0):
+def chomp(mode, seed=0, num_pts=1, nq=10):
     np.random.seed(seed)
     assert mode in MODES
+    print(f"CHOMP Mode {mode}")
 
     robot = rtb.models.DH.Panda() # load Mesh version (for collisions)
     # robot = rtb.models.URDF.Panda()  # load URDF version of the Panda (for visuals)
@@ -80,11 +78,9 @@ def chomp(mode, seed=0):
 
     # Hyperparameters
     dt = 1
-    nq = 50
     lmbda = 1000
     eta = 1000
     iters = 4
-    num_pts = 50
 
     # Make cost field, starting & end points
     cdim = len(qtraj.q[0])
@@ -112,7 +108,7 @@ def chomp(mode, seed=0):
 
 
     for t in range(iters):
-        with Profiler(f"Iteration {mode}"):
+        with Profiler(f"Mode {mode} iteration"):
             nabla_smooth = AA.dot(xi) + bb
             nabla_obs = np.zeros(xidim)
             xidd = AA.dot(xi)
@@ -295,7 +291,8 @@ def chomp(mode, seed=0):
             # dxi = Ainv.dot(lmbda * nabla_smooth)
             dxi = Ainv.dot(nabla_obs + lmbda * nabla_smooth)
             xi -= dxi / eta
-            print(f"Iteration {t} total cost {total_cost}")
+            if verbose:
+                print(f"Iteration {t} total cost {total_cost}")
 
 
     if visualize:
@@ -419,7 +416,21 @@ def test_parallel(seed=0):
 
 
 if __name__ == "__main__":
-    chomp(mode="PTS")
-    chomp(mode="LINKS")
-    chomp(mode="TS")
+    import argparse
+    parser = argparse.ArgumentParser(description='Process some integers.')
+    parser.add_argument('--pts', type=int, default=50)
+    parser.add_argument('--nq', type=int, default=10)
+    parser.add_argument('--vb', action="store_true", default=False)
+
+    opt = parser.parse_args()
+    visualize = True
+    verbose = opt.vb
+    num_pts = opt.pts
+    nq = opt.nq
+    use_mesh = True
+
+    chomp(mode="NONE", num_pts=num_pts, nq=nq)
+    chomp(mode="PTS", num_pts=num_pts, nq=nq)
+    chomp(mode="LINKS", num_pts=num_pts, nq=nq)
+    chomp(mode="TS", num_pts=num_pts, nq=nq)
     # test_parallel()

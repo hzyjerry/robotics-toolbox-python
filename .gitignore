@@ -2,6 +2,9 @@
 *.sw*
 *.gif
 *.so
+data/
+*.mp4
+*.png
 
 .idea/*
 

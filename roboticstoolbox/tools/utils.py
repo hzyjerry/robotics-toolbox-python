@@ -14,6 +14,7 @@ import math
 from numba import vectorize 
 
 fknm_ = None
+PATH = "/home/jerry/Projects/Motion/robotics-toolbox-python/roboticstoolbox/cuda/fknm"
 
 def vmatmul(mat1, mat2):
     # mat1: (N, a, b)
@@ -61,7 +62,7 @@ def jacob0_pts_vec(robot, end, pts, jacob_vec, qt=None, verbose=False):
     if qt is None:
         qt = robot.q
     if fknm_ is None:
-        fknm_=np.ctypeslib.load_library('roboticstoolbox/cuda/fknm','.')
+        fknm_=np.ctypeslib.load_library(PATH,'.')
     # Parallel, use cuda
     N = len(pts)
     pts_tool = vrepeat(np.eye(4), N)
@@ -137,7 +138,7 @@ def jacob0_vec(robot, nq, njoints, link_bases, pts, jacob_vec, qt=None, verbose=
     if qt is None:
         qt = np.tile(np.array(robot.q), nq)
     if fknm_ is None:
-        fknm_=np.ctypeslib.load_library('roboticstoolbox/cuda/fknm','.')
+        fknm_=np.ctypeslib.load_library(PATH,'.')
     # Parallel, use cuda
     N = len(pts)
     num_pts = int(N / len(link_bases))
